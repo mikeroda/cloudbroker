@@ -36,6 +36,10 @@ use constant vCLOUD_API => 'v0.8a-ext1.6';
 use constant vCLOUD_RETRIES => 2;
 use constant vCLOUD_IMAGE => 'CentOS 5 (32-bit)';
 use constant vCLOUD_NS => 'http://www.vmware.com/vcloud/v0.8';
+use constant TIMEOUT_DEPLOY_MINS => 10;
+use constant TIMEOUT_POWER_ON_MINS => 5;
+use constant TIMEOUT_POWER_OFF_MINS => 5;
+use constant POLLING_INTERVAL_SECS => 20;
 use constant use_intantiation_params => 0;
 
 use HTTP::Request;
@@ -468,17 +472,20 @@ sub _create_vm
 
 	$self->{vApp} = $self->_xpath_wrap($response->content, '//ns:VApp/@href');
 
-	for (my $count = 0; $count <= 10; $count++) {
+	my $status;
+	for (my $count = 0; $count <= TIMEOUT_DEPLOY_MINS * (60 / POLLING_INTERVAL_SECS); $count++) {
 		$req = HTTP::Request->new(GET => $self->{vApp});
     	$response = $self->_request($req);
-		my $status = $self->_xpath_wrap($response->content, '//ns:VApp/@status');
+		$status = $self->_xpath_wrap($response->content, '//ns:VApp/@status');
 		if ($status eq '0' || $status eq '1') {
-		    sleep(30);
+		    sleep(POLLING_INTERVAL_SECS);
 		}
 		else {
 			last;
 		}
 	}
+	die "VM failed to deploy" if ($status ne '2' && $status ne '3');
+	
 	print "done\n";
 }
 
@@ -579,17 +586,19 @@ sub power_on
     $req->header('Content-Length' => 0);
    	my $response = $self->_request($req);
     sleep(30);
-	for (my $count = 0; $count <= 10; $count++) {
+    my $status;
+	for (my $count = 0; $count <= TIMEOUT_POWER_ON_MINS * (60 / POLLING_INTERVAL_SECS); $count++) {
 		$req = HTTP::Request->new(GET => $self->{vApp});
     	$response = $self->_request($req);
-		my $status = $self->_xpath_wrap($response->content, '//ns:VApp/@status');
+		$status = $self->_xpath_wrap($response->content, '//ns:VApp/@status');
 		if ($status ne '4') {
-		    sleep(30);
+		    sleep(POLLING_INTERVAL_SECS);
 		}
 		else {
 			last;
 		}
 	}
+	die "VM failed to power on" if ($status ne '4');
 	print "done\n";
 }
 
@@ -615,17 +624,19 @@ sub power_off
     $req->header('Content-Length' => 0);
    	my $response = $self->_request($req);
     sleep(30);
-	for (my $count = 0; $count <= 10; $count++) {
+    my $status;
+	for (my $count = 0; $count <= TIMEOUT_POWER_OFF_MINS * (60 / POLLING_INTERVAL_SECS); $count++) {
 		$req = HTTP::Request->new(GET => $self->{vApp});
     	$response = $self->_request($req);
-		my $status = $self->_xpath_wrap($response->content, '//ns:VApp/@status');
+		$status = $self->_xpath_wrap($response->content, '//ns:VApp/@status');
 		if ($status ne '2') {
-		    sleep(30);
+		    sleep(POLLING_INTERVAL_SECS);
 		}
 		else {
 			last;
 		}
 	}
+	die "VM failed to power off" if ($status ne '2');
 	print "done\n";
 }
 
