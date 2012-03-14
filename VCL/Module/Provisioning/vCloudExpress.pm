@@ -42,9 +42,9 @@ use HTTP::Request;
 use HTTP::Request::Common;
 use HTTP::Cookies;
 use LWP::UserAgent;
-use Term::ReadKey;
 use IO::Socket::SSL;
 use XML::LibXML;
+use Net::SSH::Perl;
 
 our $verbose = 0;
 our $cookie_jar;
@@ -66,6 +66,7 @@ sub new {
  
    $self->{username} = $args{username};
    $self->{password} = $args{password};
+   $self->{identity_files} = $args{identity_files};
  
    return $self;
 }
@@ -125,7 +126,7 @@ sub _barf {
 	print "\n";
 	print $req->as_string;
 	print "\n\n";
-    die "ERROR: $message\n";
+    die "$message";
 }
 
 #///////////////////////////////////////////////////////////////////////////// 
@@ -290,7 +291,7 @@ sub _xpath_wrap
         die "subroutine can only be called as a module object method";
     }
     
-	my $value = _xpath($content, $xpath, $ns);
+	my $value = $self->_xpath($content, $xpath, $ns);
 	if (!defined($value) || $value eq '') {
 		print "$content\n\n";
 	    die "Can't parse XPath: $xpath\n";
@@ -467,7 +468,7 @@ sub _create_vm
 
 	$self->{vApp} = $self->_xpath_wrap($response->content, '//ns:VApp/@href');
 
-	for (my $count = 0; $count <= 30; $count++) {
+	for (my $count = 0; $count <= 10; $count++) {
 		$req = HTTP::Request->new(GET => $self->{vApp});
     	$response = $self->_request($req);
 		my $status = $self->_xpath_wrap($response->content, '//ns:VApp/@status');
@@ -484,32 +485,22 @@ sub _create_vm
 sub _create_internet_service
 {
 	my $self = shift;
+	my $port = shift;
     unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
         die "subroutine can only be called as a module object method";
     }
 
-	my $element;
-
-	# Create an Internet service
-	#	<InternetService xmlns:xsi="http://www.w3.org/2001/XMLSchemainstance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="urn:tmrk:vCloudExpress-1.0:request:createInternetService">
-	#	<Name>IS_for_Jim</Name>
-	#	<Protocol>HTTP</Protocol>
-	#	<Port>80</Port>
-	#	<Enabled>false</Enabled>
-	#	<Description>Some test service</Description>
-	#	</InternetService>
-
 	my $doc = XML::LibXML->createDocument;
-	my $root = $doc->createElementNS( "urn:tmrk:vCloudExpress-1.0:request:createInternetService", "InternetService" );
+	my $root = $doc->createElementNS( "urn:tmrk:vCloudExpressExtensions-1.6", "CreateInternetServiceRequest" );
 	$doc->setDocumentElement( $root );
-	$element = XML::LibXML::Element->new( "Name" );
+	my $element = XML::LibXML::Element->new( "Name" );
 	$element->appendText("TCP Internet Service");
 	$root->addChild($element);
 	$element = XML::LibXML::Element->new( "Protocol" );
 	$element->appendText("TCP");
 	$root->addChild($element);
 	$element = XML::LibXML::Element->new( "Port" );
-	$element->appendText("22");
+	$element->appendText($port);
 	$root->addChild($element);
 	$element = XML::LibXML::Element->new( "Enabled" );
 	$element->appendText("true");
@@ -525,40 +516,44 @@ sub _create_internet_service
     my $response = $self->_request($req);
 	print "done\n";
 
-	my $InternetServiceID = $self->_xpath_wrap($response->content, '//ns:InternetService/ns:Id', 'urn:tmrk:vCloudExpress-1.0');
+	$self->{InternetService} = $self->_xpath_wrap($response->content, '//ns:InternetService/ns:Href', 'urn:tmrk:vCloudExpressExtensions-1.6');
+	
+	$self->{PublicIpAddress} = $self->_xpath_wrap($response->content, '//ns:PublicIpAddress/ns:Name', 'urn:tmrk:vCloudExpressExtensions-1.6');
+	print "Public IP Address: ".$self->{PublicIpAddress}."\n";
+}
 
-	#	<NodeService xmlns:xsi="http://www.w3.org/2001/XMLSchemainstance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="urn:tmrk:vCloudExpress-1.0:request:createNodeService">
-	#	<IpAddress>172.16.20.3</IpAddress>
-	#	<Name>Node for Jim</Name>
-	#	<Port>80</Port>
-	#	<Enabled>false</Enabled>
-	#	<Description>Some test node</Description>
-	#	</NodeService>
+sub _create_node_service
+{
+	my $self = shift;
+	my $port = shift;
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
+        die "subroutine can only be called as a module object method";
+    }
 
-	$doc = XML::LibXML->createDocument;
-	$root = $doc->createElementNS( "urn:tmrk:vCloudExpress-1.0:request:createNodeService", "NodeService" );
+	my $doc = XML::LibXML->createDocument;
+	my $root = $doc->createElementNS( "urn:tmrk:vCloudExpressExtensions-1.6", "CreateNodeServiceRequest" );
 	$doc->setDocumentElement( $root );
-	$element = XML::LibXML::Element->new( "IpAddress" );
+	my $element = XML::LibXML::Element->new( "IpAddress" );
 	$element->appendText($self->{IpAddress});
 	$root->addChild($element);
 	$element = XML::LibXML::Element->new( "Name" );
 	$element->appendText("My Node Service");
 	$root->addChild($element);
 	$element = XML::LibXML::Element->new( "Port" );
-	$element->appendText("22");
+	$element->appendText($port);
 	$root->addChild($element);
 	$element = XML::LibXML::Element->new( "Enabled" );
 	$element->appendText("true");
 	$root->addChild($element);
 
-    $req = HTTP::Request->new(POST => vCLOUD.'/'.vCLOUD_API."/internetServices/".$InternetServiceID."/nodes");
+    my $req = HTTP::Request->new(POST => $self->{InternetService}."/nodeServices");
     $req->header('Content-Length' => length($doc->toString));
     $req->header('Content-Type' => 'application/vnd.vmware.vcloud.createInternetService+xml');
     $req->content($doc->toString);
  
 	print "\nCreating Node Service...";
 	STDOUT->flush();
-    $response = $self->_request($req);
+    my $response = $self->_request($req);
 	print "done\n";
 }
 
@@ -729,12 +724,15 @@ sub load
 	$self->{catalog} = $self->_xpath_wrap($response->content, '//ns:Link[@type=\'application/vnd.vmware.vcloud.catalog+xml\']/@href');
 	$self->{internetServices} = $self->_xpath_wrap($response->content, '//ns:Link[@name=\'Internet Services\']/@href');
 
-	# Look to see if the vApp already exists
-	$self->{vApp} = $self->_xpath($response->content, '//ns:ResourceEntity[@type=\'application/vnd.vmware.vcloud.vApp+xml\' and @name=\''.$self->{vAppName}.'\']/@href');
-	
 	$self->does_image_exist;
 
-	print "\nGetting IP address and current state of VM...";
+	# Look to see if the vApp already exists
+	$self->{vApp} = $self->_xpath($response->content, '//ns:ResourceEntity[@type=\'application/vnd.vmware.vcloud.vApp+xml\' and @name=\''.$self->{vAppName}.'\']/@href');
+	if (!defined($self->{vApp}) || $self->{vApp} eq '') {
+		$self->_create_vm;
+	}
+	
+	print "\nGetting private IP address and current state of VM...";
 	STDOUT->flush();
 	$req = HTTP::Request->new(GET => $self->{vApp});
    	$response = $self->_request($req);
@@ -743,18 +741,56 @@ sub load
 	print "done\n";
 	
 	if ($status eq "2") {
-		$self->_power_on;
+		$self->power_on;
 	}
+	
+	$self->_create_internet_service(22);
+	$self->_create_node_service(22);
+	
+	# Enable SSH login to VM through the public interface
+	print "\nEnabling SSH login to VM through public interface...";
+	STDOUT->flush();
+	my $ssh = Net::SSH::Perl->new($self->{IpAddress}, identity_files => $self->{identity_files});
+	$ssh->login("vcloud");
+	$self->_ssh_cmd($ssh, "sudo sed -i s/'PasswordAuthentication no'/'PasswordAuthentication yes'/ /etc/ssh/sshd_config");
+	$self->_ssh_cmd($ssh, "sudo /etc/init.d/sshd restart");
+	$self->_ssh_cmd($ssh, "echo ".$self->{password}." | sudo passwd --stdin vcloud");
+	print "done\n";
+	
+	return 1;
+}
+
+sub _get_template_desc
+{
+	my $self = shift;
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
+        die "subroutine can only be called as a module object method";
+    }
 	
 	print "\nGetting template description...";
 	STDOUT->flush();
-    $req = HTTP::Request->new(GET => $self->{vAppTemplate});
-    $response = $self->_request($req);
+    my $req = HTTP::Request->new(GET => $self->{vAppTemplate});
+    my $response = $self->_request($req);
 	print "done\n";
 
 	my $description = $self->_xpath_wrap($response->content, '//ns:Description');
 	print "\n$description\n";
-	return 1;
+}
+
+sub _ssh_cmd
+{
+	my $self = shift;
+	my $ssh = shift;
+	my $cmd = shift;
+
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
+        die "subroutine can only be called as a module object method";
+    }
+	
+	my($stdout, $stderr, $exit) = $ssh->cmd($cmd);
+	if ($exit != 0) {
+		die $stderr;
+	}
 }
 
 1;
