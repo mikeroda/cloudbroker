@@ -319,37 +319,6 @@ sub _create_vm
         die "subroutine can only be called as a module object method";
     }
 	
-	#
-	# Creating Virtual Machine instance.  This is what the XML should look like 
-	#
-	#   <InstantiateVAppTemplateParams xmlns="http://www.vmware.com/vcloud/v0.8" name="VM1">
-	#    <VAppTemplate href="https://services.vcloudexpress.terremark.com/api/v0.8a-ext1.6/vappTemplate/5"/>
-	#    <InstantiationParams>
-	#      <ProductSection xmlns:q1="http://www.vmware.com/vcloud/v0.8" xmlns:ovf="http://schemas.dmtf.org/ovf/envelope/1">
-	#        <Property xmlns="http://schemas.dmtf.org/ovf/envelope/1" ovf:key="sshKeyFingerprint" ovf:value="e4:b3:18:b3:0e:11:44:ef:2d:2b:44:ef:58:09:b5:8e"/>
-	#	     <Property xmlns="http://schemas.dmtf.org/ovf/envelope/1" ovf:key="row" ovf:value="Api"/>
-	#        <Property xmlns="http://schemas.dmtf.org/ovf/envelope/1" ovf:key="group" ovf:value="Api"/>
-	#      </ProductSection>
-	#      <VirtualHardwareSection>
-	#        <Item xmlns="http://schemas.dmtf.org/ovf/envelope/1">
-	#         <InstanceID xmlns="http://schemas.dmtf.org/wbem/wscim/1/cimschema/2/CIM_ResourceAllocationSettingData">1</InstanceID>
-	#		  <ResourceType xmlns="http://schemas.dmtf.org/wbem/wscim/1/cimschema/2/CIM_ResourceAllocationSettingData">3</ResourceType>
-	#		  <VirtualQuantity xmlns="http://schemas.dmtf.org/wbem/wscim/1/cimschema/2/CIM_ResourceAllocationSettingData">1</VirtualQuantity>
-	#		 </Item>
-	#		 <Item xmlns="http://schemas.dmtf.org/ovf/envelope/1">
-	#		  <InstanceID xmlns="http://schemas.dmtf.org/wbem/wscim/1/cimschema/2/CIM_ResourceAllocationSettingData">2</InstanceID>
-	#		  <ResourceType xmlns="http://schemas.dmtf.org/wbem/wscim/1/cimschema/2/CIM_ResourceAllocationSettingData">4</ResourceType>
-	# 		  <VirtualQuantity xmlns="http://schemas.dmtf.org/wbem/wscim/1/cimschema/2/CIM_ResourceAllocationSettingData">512</VirtualQuantity>
-	#		 </Item>
-	#      </VirtualHardwareSection>
-	#	   <NetworkConfigSection>
-	#		<NetworkConfig>
-	#		  <NetworkAssociation href="https://services.vcloudexpress.terremark.com/api/v0.8a-ext1.6/network/2110"/>
-	#		</NetworkConfig>
-	#      </NetworkConfigSection>
-	#    </InstantiationParams>
-	#   </InstantiateVAppTemplateParams>
-
 	my $doc = XML::LibXML->createDocument;
 	my $root = $doc->createElementNS( vCLOUD_NS, "InstantiateVAppTemplateParams" );
 	$root->setNamespace("http://www.w3.org/2001/XMLSchema-instance", "xsi", 0);
@@ -526,7 +495,6 @@ sub _create_internet_service
 	$self->{InternetService} = $self->_xpath_wrap($response->content, '//ns:InternetService/ns:Href', 'urn:tmrk:vCloudExpressExtensions-1.6');
 	
 	$self->{PublicIpAddress} = $self->_xpath_wrap($response->content, '//ns:PublicIpAddress/ns:Name', 'urn:tmrk:vCloudExpressExtensions-1.6');
-	print "Public IP Address: ".$self->{PublicIpAddress}."\n";
 }
 
 sub _create_node_service
@@ -688,6 +656,58 @@ sub does_image_exist
 	return 1;
 }
 
+sub _is_connected_internet
+{
+	my $self = shift;
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
+        die "subroutine can only be called as a module object method";
+    }
+
+    if (!$self->{internetServices} || $self->{internetServices} eq '') {
+        die "Internet services URL is not defined";
+    }
+    if (!$self->{IpAddress} || $self->{IpAddress} eq '') {
+        die "Private IP address of VM is not known";
+    }
+
+	print "\nGetting all internet services...";
+	STDOUT->flush();
+    my $req = HTTP::Request->new(GET => $self->{internetServices});
+    my $response = $self->_request($req);
+	print "done\n";
+
+	my $parser = XML::LibXML->new();
+	my $doc = $parser->parse_string($response->content);
+
+	my $xc = XML::LibXML::XPathContext->new( $doc->documentElement()  );
+	$xc->registerNs('ns', 'urn:tmrk:vCloudExpressExtensions-1.6');
+
+	my @nodes = $xc->findnodes('//ns:InternetService/ns:Href');
+	foreach my $internetService (@nodes) {
+		my $xc_is = XML::LibXML::XPathContext->new( $internetService );
+		$xc_is->registerNs('ns', 'urn:tmrk:vCloudExpressExtensions-1.6');
+		my $id = $xc_is->findvalue('//ns:InternetService/ns:Id');
+		my $url = $xc_is->findvalue('//ns:InternetService/ns:Href');
+		my $PublicIpAddress = $xc_is->findvalue('//ns:PublicIpAddress/ns:Name');
+
+		print "\nGetting node services on internet service $id...";
+		STDOUT->flush();
+
+	    my $req = HTTP::Request->new(GET => $url."/nodeServices");
+	    my $response = $self->_request($req);
+		print "done\n";
+
+		my $IpAddress = $self->_xpath($response->content, '//ns:IpAddress', 'urn:tmrk:vCloudExpressExtensions-1.6');
+
+  		if ($IpAddress eq $self->{IpAddress}) {
+  			$self->{PublicIpAddress} = $PublicIpAddress;
+  			return 1;
+  		}
+   	}
+
+	return 0;
+}
+
 #///////////////////////////////////////////////////////////////////////////// 
 =head2 load
         
@@ -754,9 +774,11 @@ sub load
 	if ($status eq "2") {
 		$self->power_on;
 	}
-	
-	$self->_create_internet_service(22);
-	$self->_create_node_service(22);
+
+	if (!$self->_is_connected_internet) {
+		$self->_create_internet_service(22);
+		$self->_create_node_service(22);
+	}
 	
 	# Enable SSH login to VM through the public interface
 	print "\nEnabling SSH login to VM through public interface...";
@@ -768,6 +790,8 @@ sub load
 	$self->_ssh_cmd($ssh, "echo ".$self->{password}." | sudo passwd --stdin vcloud");
 	print "done\n";
 	
+	print "Public IP Address: ".$self->{PublicIpAddress}."\n";
+		
 	return 1;
 }
 
