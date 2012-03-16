@@ -6,7 +6,7 @@
 
 =head1 NAME
 
-VCL::Module::Provisioning::vCloudExpress
+VCL::Module::Provisioning::tmrk
 
 =head1 SYNOPSIS
 
@@ -22,7 +22,7 @@ VCL::Module::Provisioning::vCloudExpress
 =cut
 
 ##############################################################################
-package VCL::Module::Provisioning::vCloudExpress;
+package VCL::Module::Provisioning::tmrk;
 
 our $VERSION = '0.1';
 
@@ -33,7 +33,7 @@ use English qw( -no_match_vars );
 
 use constant vCLOUD => 'https://services.vcloudexpress.terremark.com/api';
 use constant vCLOUD_API => 'v0.8a-ext1.6';
-use constant vCLOUD_RETRIES => 2;
+use constant vCLOUD_RETRIES => 0;
 use constant vCLOUD_IMAGE => 'CentOS 5 (32-bit)';
 use constant vCLOUD_NS => 'http://www.vmware.com/vcloud/v0.8';
 use constant TIMEOUT_DEPLOY_MINS => 10;
@@ -88,7 +88,7 @@ sub new {
 
 sub initialize {
     my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
         die "subroutine can only be called as a module object method";
     }
         
@@ -101,8 +101,16 @@ sub initialize {
 	$ua = LWP::UserAgent->new;
 	$ua->cookie_jar($cookie_jar);
 
-    $self->_login() || return 0;
-        
+    my $response = $self->_login() || return 0;
+
+	# get a link to the organization from the information returned from login
+	my $org = $self->_xpath_wrap($response->content, '//ns:Org/@href');
+
+	# get the organization information to obtain a link to the vDC
+    my $req = HTTP::Request->new(GET => $org);
+    $response = $self->_request($req);
+	$self->{vDC} = $self->_xpath_wrap($response->content, '//ns:Link[@type=\'application/vnd.vmware.vcloud.vdc+xml\']/@href');
+
     return 1;
 }       
 
@@ -121,7 +129,7 @@ sub _barf {
 	my $req = shift;
     my $response = shift;
     
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
         die "subroutine can only be called as a module object method";
     }
     
@@ -145,7 +153,7 @@ sub _barf {
 sub _login()
 {
 	my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
         die "subroutine can only be called as a module object method";
     }
 	
@@ -179,7 +187,7 @@ sub _request
 	my $req = shift;
 	my ($response);
 
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
         die "subroutine can only be called as a module object method";
     }
 	
@@ -219,7 +227,7 @@ sub _request
 sub versions
 {
 	my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
         die "subroutine can only be called as a module object method";
     }
 
@@ -271,7 +279,7 @@ sub _xpath
 	my $ns = vCLOUD_NS;
 	$ns = shift if @_;
 	
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
         die "subroutine can only be called as a module object method";
     }
 
@@ -291,7 +299,7 @@ sub _xpath_wrap
 	my $ns = vCLOUD_NS;
 	$ns = shift if @_;
 
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
         die "subroutine can only be called as a module object method";
     }
     
@@ -315,19 +323,23 @@ sub _xpath_wrap
 sub _create_vm
 {
 	my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
         die "subroutine can only be called as a module object method";
     }
+    my $vAppName = shift;
+	my $vAppTemplate = shift;
+
+	my $network = $self->_get_from_vdc('//ns:Network/@href');
 	
 	my $doc = XML::LibXML->createDocument;
 	my $root = $doc->createElementNS( vCLOUD_NS, "InstantiateVAppTemplateParams" );
 	$root->setNamespace("http://www.w3.org/2001/XMLSchema-instance", "xsi", 0);
 	$doc->setDocumentElement( $root );
-	$root->setAttribute("name", $self->{vAppName});
+	$root->setAttribute("name", $vAppName);
 
-	my $vAppTemplate = XML::LibXML::Element->new( "VAppTemplate" );
-	$vAppTemplate->setAttribute("href", $self->{vAppTemplate});
-	$root->addChild($vAppTemplate);
+	my $VAppTemplate = XML::LibXML::Element->new( "VAppTemplate" );
+	$VAppTemplate->setAttribute("href", $vAppTemplate);
+	$root->addChild($VAppTemplate);
 
 	my $InstantiationParams;
 	
@@ -415,7 +427,7 @@ sub _create_vm
 	my $networkConfig = XML::LibXML::Element->new( "NetworkConfig" );
 	$networkConfigSection->addChild($networkConfig);
 	my $networkAssociation = XML::LibXML::Element->new( "NetworkAssociation" );
-	$networkAssociation->setAttribute("href", $self->{network});
+	$networkAssociation->setAttribute("href", $network);
 	$networkConfig->addChild($networkAssociation);
 
     my $req = HTTP::Request->new(POST => $self->{vDC}.'/action/instantiatevAppTemplate');
@@ -423,7 +435,7 @@ sub _create_vm
     $req->header('Content-Type' => 'application/vnd.vmware.vcloud.instantiateVAppTemplateParams+xml');
     $req->content($doc->toString);
 
-	print "\nCreating Virtual Machine ".$self->{vAppName}."...";
+	print "Creating Virtual Machine $vAppName...";
 	STDOUT->flush();
 	my $response = $self->_request($req);
 	print "done\n";
@@ -435,7 +447,7 @@ sub _create_vm
 	#   <Link rel="up" href="https://services.vcloudexpress.terremark.com/api/v0.8/vdc/3068" type="application/vnd.vmware.vcloud.vdc+xml"/>
 	# </VApp>
 
-	print "\nVM is being created, this may take several minutes...";
+	print "VM is being created, this may take several minutes...";
 	STDOUT->flush();
     sleep(30);
 
@@ -458,14 +470,17 @@ sub _create_vm
 	print "done\n";
 }
 
-sub _create_internet_service
+sub _connect_to_internet
 {
 	my $self = shift;
 	my $port = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
         die "subroutine can only be called as a module object method";
     }
 
+	my $internetServices = $self->_get_from_vdc('//ns:Link[@name=\'Internet Services\']/@href');
+
+	# build the xml document to open up a TCP port on a new public IP address
 	my $doc = XML::LibXML->createDocument;
 	my $root = $doc->createElementNS( "urn:tmrk:vCloudExpressExtensions-1.6", "CreateInternetServiceRequest" );
 	$doc->setDocumentElement( $root );
@@ -482,33 +497,25 @@ sub _create_internet_service
 	$element->appendText("true");
 	$root->addChild($element);
 
-    my $req = HTTP::Request->new(POST => $self->{internetServices});
+    my $req = HTTP::Request->new(POST => $internetServices);
     $req->header('Content-Length' => length($doc->toString));
     $req->header('Content-Type' => 'application/vnd.vmware.vcloud.createInternetService+xml');
     $req->content($doc->toString);
  
-	print "\nCreating Internet Service...";
+	print "Creating Internet Service...";
 	STDOUT->flush();
     my $response = $self->_request($req);
 	print "done\n";
 
-	$self->{InternetService} = $self->_xpath_wrap($response->content, '//ns:InternetService/ns:Href', 'urn:tmrk:vCloudExpressExtensions-1.6');
-	
+	# get a link to the internet service we just created and save the public IP address
+	my $InternetService = $self->_xpath_wrap($response->content, '//ns:InternetService/ns:Href', 'urn:tmrk:vCloudExpressExtensions-1.6');
 	$self->{PublicIpAddress} = $self->_xpath_wrap($response->content, '//ns:PublicIpAddress/ns:Name', 'urn:tmrk:vCloudExpressExtensions-1.6');
-}
 
-sub _create_node_service
-{
-	my $self = shift;
-	my $port = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
-        die "subroutine can only be called as a module object method";
-    }
-
-	my $doc = XML::LibXML->createDocument;
-	my $root = $doc->createElementNS( "urn:tmrk:vCloudExpressExtensions-1.6", "CreateNodeServiceRequest" );
+	# build the xml request to create a node service which will tie the internet service to the VM
+	$doc = XML::LibXML->createDocument;
+	$root = $doc->createElementNS( "urn:tmrk:vCloudExpressExtensions-1.6", "CreateNodeServiceRequest" );
 	$doc->setDocumentElement( $root );
-	my $element = XML::LibXML::Element->new( "IpAddress" );
+	$element = XML::LibXML::Element->new( "IpAddress" );
 	$element->appendText($self->{IpAddress});
 	$root->addChild($element);
 	$element = XML::LibXML::Element->new( "Name" );
@@ -521,15 +528,66 @@ sub _create_node_service
 	$element->appendText("true");
 	$root->addChild($element);
 
-    my $req = HTTP::Request->new(POST => $self->{InternetService}."/nodeServices");
+    $req = HTTP::Request->new(POST => $InternetService."/nodeServices");
     $req->header('Content-Length' => length($doc->toString));
     $req->header('Content-Type' => 'application/vnd.vmware.vcloud.createInternetService+xml');
     $req->content($doc->toString);
  
-	print "\nCreating Node Service...";
+	print "Creating Node Service...";
 	STDOUT->flush();
+    $response = $self->_request($req);
+	print "done\n";
+}
+
+sub _is_connected_internet
+{
+	my $self = shift;
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
+        die "subroutine can only be called as a module object method";
+    }
+
+    if (!$self->{IpAddress}) {
+        die "Private IP address of VM is not known";
+    }
+
+	my $internetServices = $self->_get_from_vdc('//ns:Link[@name=\'Internet Services\']/@href');
+
+	print "Getting all internet services...";
+	STDOUT->flush();
+    my $req = HTTP::Request->new(GET => $internetServices);
     my $response = $self->_request($req);
 	print "done\n";
+
+	my $parser = XML::LibXML->new();
+	my $doc = $parser->parse_string($response->content);
+
+	my $xc = XML::LibXML::XPathContext->new( $doc->documentElement()  );
+	$xc->registerNs('ns', 'urn:tmrk:vCloudExpressExtensions-1.6');
+
+	my @nodes = $xc->findnodes('//ns:InternetService/ns:Href');
+	foreach my $internetService (@nodes) {
+		my $xc_is = XML::LibXML::XPathContext->new( $internetService );
+		$xc_is->registerNs('ns', 'urn:tmrk:vCloudExpressExtensions-1.6');
+		my $id = $xc_is->findvalue('//ns:InternetService/ns:Id');
+		my $url = $xc_is->findvalue('//ns:InternetService/ns:Href');
+		my $PublicIpAddress = $xc_is->findvalue('//ns:PublicIpAddress/ns:Name');
+
+		print "Getting node services on internet service $id...";
+		STDOUT->flush();
+
+	    my $req = HTTP::Request->new(GET => $url."/nodeServices");
+	    my $response = $self->_request($req);
+		print "done\n";
+
+		my $IpAddress = $self->_xpath($response->content, '//ns:IpAddress', 'urn:tmrk:vCloudExpressExtensions-1.6');
+
+  		if ($IpAddress eq $self->{IpAddress}) {
+  			$self->{PublicIpAddress} = $PublicIpAddress;
+  			return 1;
+  		}
+   	}
+
+	return 0;
 }
 
 #///////////////////////////////////////////////////////////////////////////// 
@@ -544,13 +602,14 @@ sub _create_node_service
 sub power_on
 {
 	my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
         die "subroutine can only be called as a module object method";
     }
-
-	print "\nPowering up VM, this may take several minutes...";
+	my $vApp = shift;
+	
+	print "Powering up VM, this may take several minutes...";
 	STDOUT->flush();
-	my $req = HTTP::Request->new(POST => $self->{vApp}.'/power/action/powerOn');
+	my $req = HTTP::Request->new(POST => $vApp.'/power/action/powerOn');
     $req->header('Content-Length' => 0);
    	my $response = $self->_request($req);
     sleep(30);
@@ -582,13 +641,15 @@ sub power_on
 sub power_off
 {
 	my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
         die "subroutine can only be called as a module object method";
     }
 
-	print "\nPowering off VM, this may take several minutes...";
+	my $vApp = shift;
+	
+	print "Powering off VM, this may take several minutes...";
 	STDOUT->flush();
-	my $req = HTTP::Request->new(POST => $self->{vApp}.'/power/action/powerOff');
+	my $req = HTTP::Request->new(POST => $vApp.'/power/action/powerOff');
     $req->header('Content-Length' => 0);
    	my $response = $self->_request($req);
     sleep(30);
@@ -616,14 +677,54 @@ sub power_off
  Returns     : 0 or 1
  Description : Searches the catalog for requested image
                returns 1 if found or 0 if not
-               saves URL for the image as $self->{vAppTemplate}
 
 =cut
 
 sub does_image_exist
 {
 	my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
+        die "subroutine can only be called as a module object method";
+    }
+
+    # get the image name, first try passed argument, then data
+    my $image_name = shift;
+    $image_name = vCLOUD_IMAGE if !$image_name;
+    if (!$image_name) {
+        die "unable to determine image name";
+    }
+
+	# get catalog of images that are available	
+    my $req = HTTP::Request->new(GET => $self->{catalog});
+    my $response = $self->_request($req);
+
+	# look for the image name in the catalog
+	my $catalogItem = $self->_xpath($response->content, '//ns:CatalogItem[@name=\''.$image_name.'\']/@href');
+	if (!$catalogItem) {
+        die "Image $image_name not found in catalog";
+	}
+
+	# get detailed information on the catalog item
+    $req = HTTP::Request->new(GET => $catalogItem);
+    $response = $self->_request($req);
+
+	return 1;
+}
+
+#/////////////////////////////////////////////////////////////////////////////
+
+=head2 _get_vapp_template
+
+ Parameters  : imagename
+ Returns     : URL to the vAppTemplate
+ Description : Searches the catalog for requested image
+
+=cut
+
+sub _get_vapp_template
+{
+	my $self = shift;
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
         die "subroutine can only be called as a module object method";
     }
 
@@ -633,15 +734,17 @@ sub does_image_exist
     if (!$image_name) {
         die "unable to determine image name";
     }
+
+	my $catalog = $self->_get_from_vdc('//ns:Link[@type=\'application/vnd.vmware.vcloud.catalog+xml\']/@href');
 	
-	print "\nGetting catalog of images...";
+	print "Getting catalog of images...";
 	STDOUT->flush();
-    my $req = HTTP::Request->new(GET => $self->{catalog});
+    my $req = HTTP::Request->new(GET => $catalog);
     my $response = $self->_request($req);
 	print "done\n";
 
 	my $catalogItem = $self->_xpath($response->content, '//ns:CatalogItem[@name=\''.$image_name.'\']/@href');
-	if (!defined($catalogItem) || $catalogItem eq '') {
+	if (!$catalogItem) {
         die "Image $image_name not found in catalog";
 	}
 
@@ -651,61 +754,7 @@ sub does_image_exist
     $response = $self->_request($req);
 	print "done\n";
 
-	$self->{vAppTemplate} = $self->_xpath_wrap($response->content, '//ns:Entity[@type=\'application/vnd.vmware.vcloud.vAppTemplate+xml\']/@href');
-	
-	return 1;
-}
-
-sub _is_connected_internet
-{
-	my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
-        die "subroutine can only be called as a module object method";
-    }
-
-    if (!$self->{internetServices} || $self->{internetServices} eq '') {
-        die "Internet services URL is not defined";
-    }
-    if (!$self->{IpAddress} || $self->{IpAddress} eq '') {
-        die "Private IP address of VM is not known";
-    }
-
-	print "\nGetting all internet services...";
-	STDOUT->flush();
-    my $req = HTTP::Request->new(GET => $self->{internetServices});
-    my $response = $self->_request($req);
-	print "done\n";
-
-	my $parser = XML::LibXML->new();
-	my $doc = $parser->parse_string($response->content);
-
-	my $xc = XML::LibXML::XPathContext->new( $doc->documentElement()  );
-	$xc->registerNs('ns', 'urn:tmrk:vCloudExpressExtensions-1.6');
-
-	my @nodes = $xc->findnodes('//ns:InternetService/ns:Href');
-	foreach my $internetService (@nodes) {
-		my $xc_is = XML::LibXML::XPathContext->new( $internetService );
-		$xc_is->registerNs('ns', 'urn:tmrk:vCloudExpressExtensions-1.6');
-		my $id = $xc_is->findvalue('//ns:InternetService/ns:Id');
-		my $url = $xc_is->findvalue('//ns:InternetService/ns:Href');
-		my $PublicIpAddress = $xc_is->findvalue('//ns:PublicIpAddress/ns:Name');
-
-		print "\nGetting node services on internet service $id...";
-		STDOUT->flush();
-
-	    my $req = HTTP::Request->new(GET => $url."/nodeServices");
-	    my $response = $self->_request($req);
-		print "done\n";
-
-		my $IpAddress = $self->_xpath($response->content, '//ns:IpAddress', 'urn:tmrk:vCloudExpressExtensions-1.6');
-
-  		if ($IpAddress eq $self->{IpAddress}) {
-  			$self->{PublicIpAddress} = $PublicIpAddress;
-  			return 1;
-  		}
-   	}
-
-	return 0;
+	return $self->_xpath_wrap($response->content, '//ns:Entity[@type=\'application/vnd.vmware.vcloud.vAppTemplate+xml\']/@href');
 }
 
 #///////////////////////////////////////////////////////////////////////////// 
@@ -721,67 +770,38 @@ sub load
 {
     my($self, %args) = @_;
 #	my $self = shift;
-	$self->{vAppName} = $args{vAppName};
+	my $vAppName = $args{vAppName};
 
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
         die "subroutine can only be called as a module object method";
     }
 
-	my ($req);
-	my ($response);
-
-	print "\nLogging into vCloud Express...";
-	STDOUT->flush();
-	$response = $self->_login;
-	print "done\n";
-	
-	my $org = $self->_xpath_wrap($response->content, '//ns:Org/@href');
-
-	print "\nGetting organization...";
-	STDOUT->flush();
-    $req = HTTP::Request->new(GET => $org);
-    $response = $self->_request($req);
-	print "done\n";
-
-	$self->{vDC} = $self->_xpath_wrap($response->content, '//ns:Link[@type=\'application/vnd.vmware.vcloud.vdc+xml\']/@href');
-
-	print "\nGetting vDC...";
-	STDOUT->flush();
-    $req = HTTP::Request->new(GET => $self->{vDC});
-    $response = $self->_request($req);
-	print "done\n";
-
-	$self->{network} = $self->_xpath_wrap($response->content, '//ns:Network/@href');
-	$self->{catalog} = $self->_xpath_wrap($response->content, '//ns:Link[@type=\'application/vnd.vmware.vcloud.catalog+xml\']/@href');
-	$self->{internetServices} = $self->_xpath_wrap($response->content, '//ns:Link[@name=\'Internet Services\']/@href');
-
-	$self->does_image_exist;
-
 	# Look to see if the vApp already exists
-	$self->{vApp} = $self->_xpath($response->content, '//ns:ResourceEntity[@type=\'application/vnd.vmware.vcloud.vApp+xml\' and @name=\''.$self->{vAppName}.'\']/@href');
-	if (!defined($self->{vApp}) || $self->{vApp} eq '') {
-		$self->_create_vm;
+	my $vApp = $self->_get_from_vdc('//ns:ResourceEntity[@type=\'application/vnd.vmware.vcloud.vApp+xml\' and @name=\''.$vAppName.'\']/@href');
+	if (!$vApp) {
+		# get the image template
+		my $vAppTemplate = $self->_get_vapp_template;
+
+		# create the VM
+		$self->_create_vm($vAppName, $vAppTemplate);
 	}
 	
-	print "\nGetting private IP address and current state of VM...";
-	STDOUT->flush();
-	$req = HTTP::Request->new(GET => $self->{vApp});
-   	$response = $self->_request($req);
+	# get the status and private IP address of the VM
+	my $req = HTTP::Request->new(GET => $vApp);
+   	my $response = $self->_request($req);
 	my $status = $self->_xpath_wrap($response->content, '//ns:VApp/@status');
 	$self->{IpAddress} = $self->_xpath_wrap($response->content, '//ns:NetworkConnection/ns:IpAddress');
-	print "done\n";
 	
 	if ($status eq "2") {
-		$self->power_on;
+		$self->power_on($vApp);
 	}
 
 	if (!$self->_is_connected_internet) {
-		$self->_create_internet_service(22);
-		$self->_create_node_service(22);
+		$self->_connect_to_internet(22);
 	}
 	
 	# Enable SSH login to VM through the public interface
-	print "\nEnabling SSH login to VM through public interface...";
+	print "Enabling SSH login to VM through public interface...";
 	STDOUT->flush();
 	my $ssh = Net::SSH::Perl->new($self->{IpAddress}, identity_files => $self->{identity_files});
 	$ssh->login("vcloud");
@@ -795,16 +815,31 @@ sub load
 	return 1;
 }
 
+sub _get_from_vdc
+{
+	my $self = shift;
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
+        die "subroutine can only be called as a module object method";
+    }
+
+	my $xpath = shift;
+	
+    my $req = HTTP::Request->new(GET => $self->{vDC});
+    my $response = $self->_request($req);
+    return $self->_xpath($response->content, $xpath);
+}
+
 sub _get_template_desc
 {
 	my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
         die "subroutine can only be called as a module object method";
     }
+	my $vAppTemplate = shift;
 	
-	print "\nGetting template description...";
+	print "Getting template description...";
 	STDOUT->flush();
-    my $req = HTTP::Request->new(GET => $self->{vAppTemplate});
+    my $req = HTTP::Request->new(GET => $vAppTemplate);
     my $response = $self->_request($req);
 	print "done\n";
 
@@ -818,7 +853,7 @@ sub _ssh_cmd
 	my $ssh = shift;
 	my $cmd = shift;
 
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::vCloudExpress')) {
+    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
         die "subroutine can only be called as a module object method";
     }
 	
