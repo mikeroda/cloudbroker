@@ -17,7 +17,7 @@ VCL::Module::Provisioning::tmrk
  This module provides support for Terremark vCloud Express API 0.8a-ext1.6
  http://vcloudexpress.terremark.com/
  API documentation:
- https://community.vcloudexpress.terremark.com/en-us/product_docs/m/vcefiles/1639/download.aspx
+ https://community.vcloudexpress.terremark.com/en-us/product_docs/m/vcefiles/2342/download.aspx
 
 =cut
 
