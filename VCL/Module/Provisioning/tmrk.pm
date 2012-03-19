@@ -615,7 +615,7 @@ sub power_on
     sleep(30);
     my $status;
 	for (my $count = 0; $count <= TIMEOUT_POWER_ON_MINS * (60 / POLLING_INTERVAL_SECS); $count++) {
-		$req = HTTP::Request->new(GET => $self->{vApp});
+		$req = HTTP::Request->new(GET => $vApp);
     	$response = $self->_request($req);
 		$status = $self->_xpath_wrap($response->content, '//ns:VApp/@status');
 		if ($status ne '4') {
@@ -748,7 +748,7 @@ sub _get_vapp_template
         die "Image $image_name not found in catalog";
 	}
 
-	print "\nGetting catalog item ".$image_name."...";
+	print "Getting catalog item ".$image_name."...";
 	STDOUT->flush();
     $req = HTTP::Request->new(GET => $catalogItem);
     $response = $self->_request($req);
@@ -784,6 +784,9 @@ sub load
 
 		# create the VM
 		$self->_create_vm($vAppName, $vAppTemplate);
+		
+		# should be able to find the vApp now
+		$vApp = $self->_get_from_vdc('//ns:ResourceEntity[@type=\'application/vnd.vmware.vcloud.vApp+xml\' and @name=\''.$vAppName.'\']/@href');
 	}
 	
 	# get the status and private IP address of the VM
