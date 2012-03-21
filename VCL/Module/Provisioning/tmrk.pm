@@ -48,14 +48,29 @@ use base qw(VCL::Module::Provisioning);
 our $VERSION = '2.2.1';
 
 # Specify the version of Perl to use
-#use 5.008000;
+use 5.008000;
 
 use strict;
 use warnings;
 use diagnostics;
 use English qw( -no_match_vars );
-
 use VCL::utils;
+use HTTP::Request;
+use HTTP::Request::Common;
+use HTTP::Cookies;
+use LWP::UserAgent;
+use IO::Socket::SSL;
+use XML::LibXML;
+use Net::SSH::Perl;
+
+our $cookie_jar;
+our $ua;
+
+##############################################################################
+
+=head1 Local GLOBAL VARIABLES
+
+=cut
 
 use constant vCLOUD => 'https://services.vcloudexpress.terremark.com/api';
 use constant vCLOUD_API => 'v0.8a-ext1.6';
@@ -68,16 +83,8 @@ use constant TIMEOUT_POWER_OFF_MINS => 5;
 use constant POLLING_INTERVAL_SECS => 20;
 use constant use_intantiation_params => 0;
 
-use HTTP::Request;
-use HTTP::Request::Common;
-use HTTP::Cookies;
-use LWP::UserAgent;
-use IO::Socket::SSL;
-use XML::LibXML;
-use Net::SSH::Perl;
+##############################################################################
 
-our $cookie_jar;
-our $ua;
 
 #///////////////////////////////////////////////////////////////////////////// 
 =head2 new
@@ -113,9 +120,11 @@ sub new {
 
 sub initialize {
     my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
-        die "subroutine can only be called as a module object method";
-    }
+
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
         
 	$cookie_jar = HTTP::Cookies->new(
     file => "$ENV{'HOME'}/lwp_cookies.dat",
@@ -126,21 +135,32 @@ sub initialize {
 	$ua = LWP::UserAgent->new;
 	$ua->cookie_jar($cookie_jar);
 
-    my $response = $self->_login() || return 0;
+    my $response = $self->_login() || return;
 
 	# get a link to the organization from the information returned from login
-	my $org = $self->_xpath_wrap($response->content, '//ns:Org/@href');
+	my $org = $self->_xpath($response->content, '//ns:Org/@href', 1);
+	if (!defined($org)) {
+		return;
+	}
 
 	# get the organization information to obtain a link to the vDC
     my $req = HTTP::Request->new(GET => $org);
     $response = $self->_request($req);
-	$self->{vDC} = $self->_xpath_wrap($response->content, '//ns:Link[@type=\'application/vnd.vmware.vcloud.vdc+xml\']/@href');
+	if (!defined($response)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to get org: $org");
+		return;
+	}
+
+	$self->{vDC} = $self->_xpath($response->content, '//ns:Link[@type=\'application/vnd.vmware.vcloud.vdc+xml\']/@href', 1);
+	if (!defined($self->{vDC})) {
+		return;
+	}
 
     return 1;
 }       
 
 #///////////////////////////////////////////////////////////////////////////// 
-=head2 _barf
+=head2 _debug_http
         
  Parameters  : HTTP::Request, HTTP::Response
  Returns     : none
@@ -149,21 +169,18 @@ sub initialize {
 =cut
 
 # A shortcut for outputting errors form the REST server
-sub _barf {
+sub _debug_http {
     my $self = shift;
 	my $req = shift;
     my $response = shift;
     
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
-        die "subroutine can only be called as a module object method";
-    }
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
     
-    my $message = $response->content;
-
-	notify($ERRORS{'WARNING'}, 0, $req->as_string);
-	notify($ERRORS{'WARNING'}, 0, $message);
-
-    die "$message";
+	notify($ERRORS{'DEBUG'}, 0, $req->as_string);
+	notify($ERRORS{'DEBUG'}, 0, $response->content);
 }
 
 #///////////////////////////////////////////////////////////////////////////// 
@@ -178,9 +195,11 @@ sub _barf {
 sub _login()
 {
 	my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
-        die "subroutine can only be called as a module object method";
-    }
+
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
 	
     my $req = HTTP::Request->new(POST => vCLOUD.'/'.vCLOUD_API.'/login');
     $req->header('Content-Length' => 0);
@@ -189,8 +208,11 @@ sub _login()
 	notify($ERRORS{'DEBUG'}, 0, "Login ".$self->{username});
     my $response = $ua->request($req);
     if (!$response->is_success) {
-        $self->_barf($req, $response);
+		notify($ERRORS{'CRITICAL'}, 0, "Login failure");
+        return;
     }
+
+	notify($ERRORS{'OK'}, 0, "Login successful");
 
 	$cookie_jar->save;
 
@@ -213,9 +235,10 @@ sub _request
 	my $req = shift;
 	my ($response);
 
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
-        die "subroutine can only be called as a module object method";
-    }
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
 	
 	for (my $count = 0; $count <= vCLOUD_RETRIES; $count++) {
 	    $response = $ua->request($req);
@@ -229,7 +252,8 @@ sub _request
 	    }
 	}
 	
-   	$self->_barf($req, $response);
+   	$self->_debug_http($req, $response);
+   	return;
 }
 
 #///////////////////////////////////////////////////////////////////////////// 
@@ -244,40 +268,33 @@ sub _request
 sub versions
 {
 	my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
-        die "subroutine can only be called as a module object method";
-    }
+
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
 
 	notify($ERRORS{'DEBUG'}, 0, "Getting API versions");
     my $response = $ua->request(GET vCLOUD.'/versions');
 
-    if ($response->is_success) {
-		my $parser = XML::LibXML->new();
-		my $doc = $parser->parse_string($response->content);
-
-		my $xc = XML::LibXML::XPathContext->new( $doc->documentElement()  );
-		$xc->registerNs('ns', 'http://www.vmware.com/vcloud/versions');
-
-		my @n = $xc->findnodes('//ns:Version');
-		foreach my $nod (@n) {
-			my $version = $nod->textContent;
-			notify($ERRORS{'OK'}, 0, "API version: $version");
-      	}
+    if (!$response->is_success) {
+        $self->_debug_http($response);
+        return 0;
     }
-    else {
-        $self->_barf($response);
-    }
-}
 
-sub _get
-{
-	my $self = shift;
-    my $url = shift;
-    my $req = HTTP::Request->new(GET => $url);
-    my $response = $self->_request($req);
-    
-    print $response->content;
-    print "\n";
+	my $parser = XML::LibXML->new();
+	my $doc = $parser->parse_string($response->content);
+
+	my $xc = XML::LibXML::XPathContext->new( $doc->documentElement()  );
+	$xc->registerNs('ns', 'http://www.vmware.com/vcloud/versions');
+
+	my @n = $xc->findnodes('//ns:Version');
+	foreach my $nod (@n) {
+		my $version = $nod->textContent;
+		notify($ERRORS{'OK'}, 0, "API version: $version");
+   	}
+      	
+  	return 1;
 }
 
 #///////////////////////////////////////////////////////////////////////////// 
@@ -294,39 +311,29 @@ sub _xpath
 	my $self = shift;
 	my $content = shift;
 	my $xpath = shift;
+	my $debug = shift;
 	my $ns = vCLOUD_NS;
 	$ns = shift if @_;
 	
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
-        die "subroutine can only be called as a module object method";
-    }
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
 
 	my $parser = XML::LibXML->new();
 	my $doc = $parser->parse_string($content);
 
 	my $xc = XML::LibXML::XPathContext->new( $doc->documentElement()  );
 	$xc->registerNs('ns', $ns);
-	return $xc->findvalue($xpath);
-}
+	my $value = $xc->findvalue($xpath);
 
-sub _xpath_wrap
-{
-	my $self = shift;
-	my $content = shift;
-	my $xpath = shift;
-	my $ns = vCLOUD_NS;
-	$ns = shift if @_;
-
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
-        die "subroutine can only be called as a module object method";
-    }
-    
-	my $value = $self->_xpath($content, $xpath, $ns);
-	if (!defined($value) || $value eq '') {
-		print "$content\n\n";
-	    die "Can't parse XPath: $xpath\n";
+	if ($debug && (!defined($value) || $value eq '')) {
+		notify($ERRORS{'DEBUG'}, 0, "Cannot parse XPath: $xpath");
+		notify($ERRORS{'DEBUG'}, 0, "$content");
+		return;
 	}
-	return $value;
+	
+	return $value;	
 }
 
 #///////////////////////////////////////////////////////////////////////////// 
@@ -341,13 +348,19 @@ sub _xpath_wrap
 sub _create_vm
 {
 	my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
-        die "subroutine can only be called as a module object method";
-    }
     my $vAppName = shift;
 	my $vAppTemplate = shift;
 
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
+
 	my $network = $self->_get_from_vdc('//ns:Network/@href');
+	if (!defined($network)) {
+		notify($ERRORS{'CRITICAL'}, 0, "unable to get Network from vDC");
+		return;
+	}
 	
 	my $doc = XML::LibXML->createDocument;
 	my $root = $doc->createElementNS( vCLOUD_NS, "InstantiateVAppTemplateParams" );
@@ -455,6 +468,10 @@ sub _create_vm
 
 	notify($ERRORS{'DEBUG'}, 0, "Creating VM $vAppName");
 	my $response = $self->_request($req);
+	if (!defined($response)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to create VM $vAppName");
+		return;
+	}
 
     #
 	# This is what the response should look like 
@@ -466,13 +483,25 @@ sub _create_vm
 	notify($ERRORS{'DEBUG'}, 0, "VM $vAppName is being deployed");
     sleep(30);
 
-	$self->{vApp} = $self->_xpath_wrap($response->content, '//ns:VApp/@href');
+	$self->{vApp} = $self->_xpath($response->content, '//ns:VApp/@href', 1);
+	if (!defined($self->{vApp})) {
+		return;
+	}
 
 	my $status;
 	for (my $count = 0; $count <= TIMEOUT_DEPLOY_MINS * (60 / POLLING_INTERVAL_SECS); $count++) {
 		$req = HTTP::Request->new(GET => $self->{vApp});
     	$response = $self->_request($req);
-		$status = $self->_xpath_wrap($response->content, '//ns:VApp/@status');
+		if (!defined($response)) {
+			notify($ERRORS{'CRITICAL'}, 0, "Failed to get vApp: ".$self->{vApp});
+			return;
+		}
+
+		$status = $self->_xpath($response->content, '//ns:VApp/@status', 1);
+		if (!defined($status)) {
+			return;
+		}
+
 		if ($status eq '0' || $status eq '1') {
 		    sleep(POLLING_INTERVAL_SECS);
 		}
@@ -480,20 +509,32 @@ sub _create_vm
 			last;
 		}
 	}
-	die "VM failed to deploy" if ($status ne '2' && $status ne '3');
+	
+	if ($status ne '2' && $status ne '3') {
+		notify($ERRORS{'CRITICAL'}, 0, "VM failed to deploy");
+		return;
+	}
 	
 	notify($ERRORS{'OK'}, 0, "VM $vAppName successfully deployed");
+	
+	return 1;
 }
 
 sub _connect_to_internet
 {
 	my $self = shift;
 	my $port = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
-        die "subroutine can only be called as a module object method";
-    }
+
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
 
 	my $internetServices = $self->_get_from_vdc('//ns:Link[@name=\'Internet Services\']/@href');
+	if (!defined($internetServices)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Unable to get Internet Services from vDC");
+		return;
+	}
 
 	# build the xml document to open up a TCP port on a new public IP address
 	my $doc = XML::LibXML->createDocument;
@@ -519,10 +560,21 @@ sub _connect_to_internet
  
 	notify($ERRORS{'DEBUG'}, 0, "Creating Internet service on TCP port $port");
     my $response = $self->_request($req);
+	if (!defined($response)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to create Internet service");
+		return;
+	}
 
 	# get a link to the internet service we just created and save the public IP address
-	my $InternetService = $self->_xpath_wrap($response->content, '//ns:InternetService/ns:Href', 'urn:tmrk:vCloudExpressExtensions-1.6');
-	$self->{PublicIpAddress} = $self->_xpath_wrap($response->content, '//ns:PublicIpAddress/ns:Name', 'urn:tmrk:vCloudExpressExtensions-1.6');
+	my $InternetService = $self->_xpath($response->content, '//ns:InternetService/ns:Href', 1, 'urn:tmrk:vCloudExpressExtensions-1.6');
+	if (!defined($InternetService)) {
+		return;
+	}
+
+	$self->{PublicIpAddress} = $self->_xpath($response->content, '//ns:PublicIpAddress/ns:Name', 1, 'urn:tmrk:vCloudExpressExtensions-1.6');
+	if (!defined($self->{PublicIpAddress})) {
+		return;
+	}
 	notify($ERRORS{'DEBUG'}, 0, "Public IP address is: ".$self->{PublicIpAddress});
 
 	# build the xml request to create a node service which will tie the internet service to the VM
@@ -549,25 +601,43 @@ sub _connect_to_internet
  
 	notify($ERRORS{'DEBUG'}, 0, "Creating node service for private IP ".$self->{IpAddress}." on TCP port $port");
     $response = $self->_request($req);
+	if (!defined($response)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to create node service");
+		return;
+	}
+
 	notify($ERRORS{'OK'}, 0, "IP ".$self->{PublicIpAddress}." successfully linked to ".$self->{IpAddress}." on TCP port $port");
+	
+	return 1;
 }
 
 sub _is_connected_internet
 {
 	my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
-        die "subroutine can only be called as a module object method";
-    }
+
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
 
     if (!$self->{IpAddress}) {
-        die "Private IP address of VM is not known";
+		notify($ERRORS{'CRITICAL'}, 0, "Private IP address of VM is not known");
+		return;
     }
 
 	my $internetServices = $self->_get_from_vdc('//ns:Link[@name=\'Internet Services\']/@href');
+	if (!defined($internetServices)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Unable to get Internet Services from vDC");
+		return;
+	}
 
 	notify($ERRORS{'DEBUG'}, 0, "Getting all internet services");
     my $req = HTTP::Request->new(GET => $internetServices);
     my $response = $self->_request($req);
+	if (!defined($response)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to get internet services");
+		return;
+	}
 
 	my $parser = XML::LibXML->new();
 	my $doc = $parser->parse_string($response->content);
@@ -587,8 +657,12 @@ sub _is_connected_internet
 
 	    my $req = HTTP::Request->new(GET => $url."/nodeServices");
 	    my $response = $self->_request($req);
+		if (!defined($response)) {
+			notify($ERRORS{'CRITICAL'}, 0, "Failed to get: ".$url."/nodeServices");
+			return;
+		}
 
-		my $IpAddress = $self->_xpath($response->content, '//ns:IpAddress', 'urn:tmrk:vCloudExpressExtensions-1.6');
+		my $IpAddress = $self->_xpath($response->content, '//ns:IpAddress', 1, 'urn:tmrk:vCloudExpressExtensions-1.6');
 
   		if ($IpAddress eq $self->{IpAddress}) {
   			$self->{PublicIpAddress} = $PublicIpAddress;
@@ -596,7 +670,7 @@ sub _is_connected_internet
   		}
    	}
 
-	return 0;
+	return;
 }
 
 #///////////////////////////////////////////////////////////////////////////// 
@@ -611,21 +685,38 @@ sub _is_connected_internet
 sub power_on
 {
 	my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
-        die "subroutine can only be called as a module object method";
-    }
+
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
+
 	my $vApp = shift;
 	
 	notify($ERRORS{'DEBUG'}, 0, "Powering up VM");
 	my $req = HTTP::Request->new(POST => $vApp.'/power/action/powerOn');
     $req->header('Content-Length' => 0);
    	my $response = $self->_request($req);
+	if (!defined($response)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to issue power-on command");
+		return;
+	}
+
     sleep(30);
     my $status;
 	for (my $count = 0; $count <= TIMEOUT_POWER_ON_MINS * (60 / POLLING_INTERVAL_SECS); $count++) {
 		$req = HTTP::Request->new(GET => $vApp);
     	$response = $self->_request($req);
-		$status = $self->_xpath_wrap($response->content, '//ns:VApp/@status');
+		if (!defined($response)) {
+			notify($ERRORS{'CRITICAL'}, 0, "Failed to get vApp: $vApp");
+			return;
+		}
+
+		$status = $self->_xpath($response->content, '//ns:VApp/@status', 1);
+		if (!defined($status)) {
+			return;
+		}
+
 		if ($status ne '4') {
 		    sleep(POLLING_INTERVAL_SECS);
 		}
@@ -633,8 +724,15 @@ sub power_on
 			last;
 		}
 	}
-	die "VM failed to power on" if ($status ne '4');
+
+	if ($status ne '4') {
+		notify($ERRORS{'CRITICAL'}, 0, "VM failed to power on");
+		return;
+	}
+
 	notify($ERRORS{'OK'}, 0, "VM successfully powered up");
+
+	return 1;
 }
 
 #///////////////////////////////////////////////////////////////////////////// 
@@ -649,9 +747,11 @@ sub power_on
 sub power_off
 {
 	my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
-        die "subroutine can only be called as a module object method";
-    }
+
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
 
 	my $vApp = shift;
 	
@@ -659,12 +759,26 @@ sub power_off
 	my $req = HTTP::Request->new(POST => $vApp.'/power/action/powerOff');
     $req->header('Content-Length' => 0);
    	my $response = $self->_request($req);
+	if (!defined($response)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to power-off VM");
+		return;
+	}
+
     sleep(30);
     my $status;
 	for (my $count = 0; $count <= TIMEOUT_POWER_OFF_MINS * (60 / POLLING_INTERVAL_SECS); $count++) {
 		$req = HTTP::Request->new(GET => $self->{vApp});
     	$response = $self->_request($req);
-		$status = $self->_xpath_wrap($response->content, '//ns:VApp/@status');
+		if (!defined($response)) {
+			notify($ERRORS{'CRITICAL'}, 0, "Failed to get vApp: ".$self->{vApp});
+			return;
+		}
+
+		$status = $self->_xpath($response->content, '//ns:VApp/@status', 1);
+		if (!defined($status)) {
+			return;
+		}
+		
 		if ($status ne '2') {
 		    sleep(POLLING_INTERVAL_SECS);
 		}
@@ -672,8 +786,15 @@ sub power_off
 			last;
 		}
 	}
-	die "VM failed to power off" if ($status ne '2');
+	
+	if ($status ne '2') {
+		notify($ERRORS{'CRITICAL'}, 0, "VM failed to power off");
+		return;
+	}
+
 	notify($ERRORS{'OK'}, 0, "VM successfully powered down");
+	
+	return 1;
 }
 
 #/////////////////////////////////////////////////////////////////////////////
@@ -690,30 +811,42 @@ sub power_off
 sub does_image_exist
 {
 	my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
-        die "subroutine can only be called as a module object method";
-    }
+
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
 
     # get the image name, first try passed argument, then data
     my $image_name = shift;
     $image_name = vCLOUD_IMAGE if !$image_name;
     if (!$image_name) {
-        die "unable to determine image name";
+		notify($ERRORS{'CRITICAL'}, 0, "unable to determine image name");
+		return;
     }
 
-	# get catalog of images that are available	
     my $req = HTTP::Request->new(GET => $self->{catalog});
+	notify($ERRORS{'DEBUG'}, 0, "Getting catalog");
     my $response = $self->_request($req);
+	if (!defined($response)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to get catalog");
+		return;
+	}
 
 	# look for the image name in the catalog
-	my $catalogItem = $self->_xpath($response->content, '//ns:CatalogItem[@name=\''.$image_name.'\']/@href');
+	my $catalogItem = $self->_xpath($response->content, '//ns:CatalogItem[@name=\''.$image_name.'\']/@href', 1);
 	if (!$catalogItem) {
-        die "Image $image_name not found in catalog";
+		notify($ERRORS{'CRITICAL'}, 0, "Image $image_name not found in catalog");
+		return;
 	}
 
 	# get detailed information on the catalog item
     $req = HTTP::Request->new(GET => $catalogItem);
     $response = $self->_request($req);
+	if (!defined($response)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to get catalog item");
+		return;
+	}
 
 	return 1;
 }
@@ -731,33 +864,49 @@ sub does_image_exist
 sub _get_vapp_template
 {
 	my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
-        die "subroutine can only be called as a module object method";
-    }
+
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
 
     # Get the image name, first try passed argument, then data
     my $image_name = shift;
     $image_name = vCLOUD_IMAGE if !$image_name;
     if (!$image_name) {
-        die "unable to determine image name";
+		notify($ERRORS{'CRITICAL'}, 0, "unable to determine image name");
+		return;
     }
 
 	my $catalog = $self->_get_from_vdc('//ns:Link[@type=\'application/vnd.vmware.vcloud.catalog+xml\']/@href');
+	if (!defined($catalog)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Unable to get catalog from vDC");
+		return;
+	}
 	
 	notify($ERRORS{'DEBUG'}, 0, "Getting catalog of images");
     my $req = HTTP::Request->new(GET => $catalog);
     my $response = $self->_request($req);
+	if (!defined($response)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to get catalog of images");
+		return;
+	}
 
-	my $catalogItem = $self->_xpath($response->content, '//ns:CatalogItem[@name=\''.$image_name.'\']/@href');
+	my $catalogItem = $self->_xpath($response->content, '//ns:CatalogItem[@name=\''.$image_name.'\']/@href', 1);
 	if (!$catalogItem) {
-        die "Image $image_name not found in catalog";
+        notify($ERRORS{'CRITICAL'}, 0, "Image $image_name not found in catalog");
+        return;
 	}
 
 	notify($ERRORS{'DEBUG'}, 0, "Getting catalog item $image_name");
     $req = HTTP::Request->new(GET => $catalogItem);
     $response = $self->_request($req);
+	if (!$response) {
+        notify($ERRORS{'CRITICAL'}, 0, "Failed to get catalog item $image_name");
+        return;
+	}
 
-	return $self->_xpath_wrap($response->content, '//ns:Entity[@type=\'application/vnd.vmware.vcloud.vAppTemplate+xml\']/@href');
+	return $self->_xpath($response->content, '//ns:Entity[@type=\'application/vnd.vmware.vcloud.vAppTemplate+xml\']/@href', 1);
 }
 
 #///////////////////////////////////////////////////////////////////////////// 
@@ -775,12 +924,13 @@ sub load
 #	my $self = shift;
 	my $vAppName = $args{vAppName};
 
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
-        die "subroutine can only be called as a module object method";
-    }
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
 
 	# Look to see if the vApp already exists
-	my $vApp = $self->_get_from_vdc('//ns:ResourceEntity[@type=\'application/vnd.vmware.vcloud.vApp+xml\' and @name=\''.$vAppName.'\']/@href');
+	my $vApp = $self->_get_from_vdc('//ns:ResourceEntity[@type=\'application/vnd.vmware.vcloud.vApp+xml\' and @name=\''.$vAppName.'\']/@href', 0);
 	if (!$vApp) {
 		# get the image template
 		my $vAppTemplate = $self->_get_vapp_template;
@@ -790,20 +940,37 @@ sub load
 		
 		# should be able to find the vApp now
 		$vApp = $self->_get_from_vdc('//ns:ResourceEntity[@type=\'application/vnd.vmware.vcloud.vApp+xml\' and @name=\''.$vAppName.'\']/@href');
+		if (!defined($vApp)) {
+			notify($ERRORS{'CRITICAL'}, 0, "could not get vApp after creating VM");
+			return;
+		}
 	}
 	
 	# get the status and private IP address of the VM
+	notify($ERRORS{'DEBUG'}, 0, "Getting details on existing vApp: $vApp");
 	my $req = HTTP::Request->new(GET => $vApp);
    	my $response = $self->_request($req);
-	my $status = $self->_xpath_wrap($response->content, '//ns:VApp/@status');
-	$self->{IpAddress} = $self->_xpath_wrap($response->content, '//ns:NetworkConnection/ns:IpAddress');
+	if (!defined($response)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to get vApp: $vApp");
+		return;
+	}
+
+	my $status = $self->_xpath($response->content, '//ns:VApp/@status', 1);
+	if (!defined($status)) {
+		return;
+	}
+		
+	$self->{IpAddress} = $self->_xpath($response->content, '//ns:NetworkConnection/ns:IpAddress', 1);
+	if (!defined($self->{IpAddress})) {
+		return;
+	}
 	
 	if ($status eq "2") {
-		$self->power_on($vApp);
+		return if (!$self->power_on($vApp));
 	}
 
 	if (!$self->_is_connected_internet) {
-		$self->_connect_to_internet(22);
+		return if (!$self->_connect_to_internet(22));
 	}
 	
 	# Enable SSH login to VM through the public interface
@@ -822,31 +989,50 @@ sub load
 sub _get_from_vdc
 {
 	my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
-        die "subroutine can only be called as a module object method";
-    }
-
 	my $xpath = shift;
+	my $debug = 1;
+	$debug = shift if @_;
+
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
+
 	
 	notify($ERRORS{'DEBUG'}, 0, "Getting vDC");
     my $req = HTTP::Request->new(GET => $self->{vDC});
     my $response = $self->_request($req);
-    return $self->_xpath($response->content, $xpath);
+	if (!defined($response)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to get vDC: ".$self->{vDC});
+		return;
+	}
+
+    return $self->_xpath($response->content, $xpath, $debug);
 }
 
 sub _get_template_desc
 {
 	my $self = shift;
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
-        die "subroutine can only be called as a module object method";
-    }
 	my $vAppTemplate = shift;
+
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
 	
 	notify($ERRORS{'DEBUG'}, 0, "Getting template description");
     my $req = HTTP::Request->new(GET => $vAppTemplate);
     my $response = $self->_request($req);
+	if (!defined($response)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to get template description");
+		return;
+	}
 
-	my $description = $self->_xpath_wrap($response->content, '//ns:Description');
+	my $description = $self->_xpath($response->content, '//ns:Description', 1);
+	if (!defined($description)) {
+		return;
+	}
+
 	notify($ERRORS{'OK'}, 0, "$description");
 }
 
@@ -856,15 +1042,19 @@ sub _ssh_cmd
 	my $ssh = shift;
 	my $cmd = shift;
 
-    unless (ref($self) && $self->isa('VCL::Module::Provisioning::tmrk')) {
-        die "subroutine can only be called as a module object method";
-    }
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
 	
 	notify($ERRORS{'DEBUG'}, 0, "SSH: $cmd");
 	my($stdout, $stderr, $exit) = $ssh->cmd($cmd);
 	if ($exit != 0) {
-		die $stderr;
+		notify($ERRORS{'CRITICAL'}, 0, $stderr);
+		return;
 	}
+	
+	return 1;
 }
 
 1;
