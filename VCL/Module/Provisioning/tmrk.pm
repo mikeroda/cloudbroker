@@ -1,7 +1,21 @@
 #!/usr/bin/perl -w
 ###############################################################################
 # Mike Roda    mike@mikeroda.com
+###############################################################################
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
 #
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 ###############################################################################
 
 =head1 NAME
@@ -10,7 +24,7 @@ VCL::Module::Provisioning::tmrk
 
 =head1 SYNOPSIS
 
- VCL module to support Terremark vCloud Express v0.8 API Provisioning
+ VCL module to support Terremark vCloud Express API Provisioning
 
 =head1 DESCRIPTION
 
@@ -24,12 +38,24 @@ VCL::Module::Provisioning::tmrk
 ##############################################################################
 package VCL::Module::Provisioning::tmrk;
 
-our $VERSION = '0.1';
+use FindBin;
+use lib "$FindBin::Bin/../../..";
+
+# Configure inheritance
+use base qw(VCL::Module::Provisioning);
+
+# Specify the version of this module
+our $VERSION = '2.2.1';
+
+# Specify the version of Perl to use
+#use 5.008000;
 
 use strict;
 use warnings;
 use diagnostics;
 use English qw( -no_match_vars );
+
+use VCL::utils;
 
 use constant vCLOUD => 'https://services.vcloudexpress.terremark.com/api';
 use constant vCLOUD_API => 'v0.8a-ext1.6';
@@ -50,7 +76,6 @@ use IO::Socket::SSL;
 use XML::LibXML;
 use Net::SSH::Perl;
 
-our $verbose = 0;
 our $cookie_jar;
 our $ua;
 
@@ -135,9 +160,9 @@ sub _barf {
     
     my $message = $response->content;
 
-	print "\n";
-	print $req->as_string;
-	print "\n\n";
+	notify($ERRORS{'WARNING'}, 0, $req->as_string);
+	notify($ERRORS{'WARNING'}, 0, $message);
+
     die "$message";
 }
 
@@ -161,6 +186,7 @@ sub _login()
     $req->header('Content-Length' => 0);
     $req->authorization_basic($self->{username}, $self->{password});
 
+	notify($ERRORS{'DEBUG'}, 0, "Login ".$self->{username});
     my $response = $ua->request($req);
     if (!$response->is_success) {
         $self->_barf($req, $response);
@@ -191,18 +217,9 @@ sub _request
         die "subroutine can only be called as a module object method";
     }
 	
-	if ($verbose == 1) {
-		print $req->as_string;
-		print "\n";
-	}
-	
 	for (my $count = 0; $count <= vCLOUD_RETRIES; $count++) {
 	    $response = $ua->request($req);
 	    if ($response->is_success) {
-	    	if ($verbose == 1) {
-	    		print $response->content;
-	    		print "\n";
-	    	}
     	    return $response;
 	    }
 	    if ($response->content =~ m/401 \- Unauthorized/) {
@@ -231,6 +248,7 @@ sub versions
         die "subroutine can only be called as a module object method";
     }
 
+	notify($ERRORS{'DEBUG'}, 0, "Getting API versions");
     my $response = $ua->request(GET vCLOUD.'/versions');
 
     if ($response->is_success) {
@@ -242,8 +260,8 @@ sub versions
 
 		my @n = $xc->findnodes('//ns:Version');
 		foreach my $nod (@n) {
-      		print $nod->textContent;
-      		print "\n";
+			my $version = $nod->textContent;
+			notify($ERRORS{'OK'}, 0, "API version: $version");
       	}
     }
     else {
@@ -435,10 +453,8 @@ sub _create_vm
     $req->header('Content-Type' => 'application/vnd.vmware.vcloud.instantiateVAppTemplateParams+xml');
     $req->content($doc->toString);
 
-	print "Creating Virtual Machine $vAppName...";
-	STDOUT->flush();
+	notify($ERRORS{'DEBUG'}, 0, "Creating VM $vAppName");
 	my $response = $self->_request($req);
-	print "done\n";
 
     #
 	# This is what the response should look like 
@@ -447,8 +463,7 @@ sub _create_vm
 	#   <Link rel="up" href="https://services.vcloudexpress.terremark.com/api/v0.8/vdc/3068" type="application/vnd.vmware.vcloud.vdc+xml"/>
 	# </VApp>
 
-	print "VM is being created, this may take several minutes...";
-	STDOUT->flush();
+	notify($ERRORS{'DEBUG'}, 0, "VM $vAppName is being deployed");
     sleep(30);
 
 	$self->{vApp} = $self->_xpath_wrap($response->content, '//ns:VApp/@href');
@@ -467,7 +482,7 @@ sub _create_vm
 	}
 	die "VM failed to deploy" if ($status ne '2' && $status ne '3');
 	
-	print "done\n";
+	notify($ERRORS{'OK'}, 0, "VM $vAppName successfully deployed");
 }
 
 sub _connect_to_internet
@@ -502,14 +517,13 @@ sub _connect_to_internet
     $req->header('Content-Type' => 'application/vnd.vmware.vcloud.createInternetService+xml');
     $req->content($doc->toString);
  
-	print "Creating Internet Service...";
-	STDOUT->flush();
+	notify($ERRORS{'DEBUG'}, 0, "Creating Internet service on TCP port $port");
     my $response = $self->_request($req);
-	print "done\n";
 
 	# get a link to the internet service we just created and save the public IP address
 	my $InternetService = $self->_xpath_wrap($response->content, '//ns:InternetService/ns:Href', 'urn:tmrk:vCloudExpressExtensions-1.6');
 	$self->{PublicIpAddress} = $self->_xpath_wrap($response->content, '//ns:PublicIpAddress/ns:Name', 'urn:tmrk:vCloudExpressExtensions-1.6');
+	notify($ERRORS{'DEBUG'}, 0, "Public IP address is: ".$self->{PublicIpAddress});
 
 	# build the xml request to create a node service which will tie the internet service to the VM
 	$doc = XML::LibXML->createDocument;
@@ -533,10 +547,9 @@ sub _connect_to_internet
     $req->header('Content-Type' => 'application/vnd.vmware.vcloud.createInternetService+xml');
     $req->content($doc->toString);
  
-	print "Creating Node Service...";
-	STDOUT->flush();
+	notify($ERRORS{'DEBUG'}, 0, "Creating node service for private IP ".$self->{IpAddress}." on TCP port $port");
     $response = $self->_request($req);
-	print "done\n";
+	notify($ERRORS{'OK'}, 0, "IP ".$self->{PublicIpAddress}." successfully linked to ".$self->{IpAddress}." on TCP port $port");
 }
 
 sub _is_connected_internet
@@ -552,11 +565,9 @@ sub _is_connected_internet
 
 	my $internetServices = $self->_get_from_vdc('//ns:Link[@name=\'Internet Services\']/@href');
 
-	print "Getting all internet services...";
-	STDOUT->flush();
+	notify($ERRORS{'DEBUG'}, 0, "Getting all internet services");
     my $req = HTTP::Request->new(GET => $internetServices);
     my $response = $self->_request($req);
-	print "done\n";
 
 	my $parser = XML::LibXML->new();
 	my $doc = $parser->parse_string($response->content);
@@ -572,12 +583,10 @@ sub _is_connected_internet
 		my $url = $xc_is->findvalue('//ns:InternetService/ns:Href');
 		my $PublicIpAddress = $xc_is->findvalue('//ns:PublicIpAddress/ns:Name');
 
-		print "Getting node services on internet service $id...";
-		STDOUT->flush();
+		notify($ERRORS{'DEBUG'}, 0, "Getting nodes on internet service $id");
 
 	    my $req = HTTP::Request->new(GET => $url."/nodeServices");
 	    my $response = $self->_request($req);
-		print "done\n";
 
 		my $IpAddress = $self->_xpath($response->content, '//ns:IpAddress', 'urn:tmrk:vCloudExpressExtensions-1.6');
 
@@ -607,8 +616,7 @@ sub power_on
     }
 	my $vApp = shift;
 	
-	print "Powering up VM, this may take several minutes...";
-	STDOUT->flush();
+	notify($ERRORS{'DEBUG'}, 0, "Powering up VM");
 	my $req = HTTP::Request->new(POST => $vApp.'/power/action/powerOn');
     $req->header('Content-Length' => 0);
    	my $response = $self->_request($req);
@@ -626,7 +634,7 @@ sub power_on
 		}
 	}
 	die "VM failed to power on" if ($status ne '4');
-	print "done\n";
+	notify($ERRORS{'OK'}, 0, "VM successfully powered up");
 }
 
 #///////////////////////////////////////////////////////////////////////////// 
@@ -647,8 +655,7 @@ sub power_off
 
 	my $vApp = shift;
 	
-	print "Powering off VM, this may take several minutes...";
-	STDOUT->flush();
+	notify($ERRORS{'DEBUG'}, 0, "Powering down VM");
 	my $req = HTTP::Request->new(POST => $vApp.'/power/action/powerOff');
     $req->header('Content-Length' => 0);
    	my $response = $self->_request($req);
@@ -666,7 +673,7 @@ sub power_off
 		}
 	}
 	die "VM failed to power off" if ($status ne '2');
-	print "done\n";
+	notify($ERRORS{'OK'}, 0, "VM successfully powered down");
 }
 
 #/////////////////////////////////////////////////////////////////////////////
@@ -737,22 +744,18 @@ sub _get_vapp_template
 
 	my $catalog = $self->_get_from_vdc('//ns:Link[@type=\'application/vnd.vmware.vcloud.catalog+xml\']/@href');
 	
-	print "Getting catalog of images...";
-	STDOUT->flush();
+	notify($ERRORS{'DEBUG'}, 0, "Getting catalog of images");
     my $req = HTTP::Request->new(GET => $catalog);
     my $response = $self->_request($req);
-	print "done\n";
 
 	my $catalogItem = $self->_xpath($response->content, '//ns:CatalogItem[@name=\''.$image_name.'\']/@href');
 	if (!$catalogItem) {
         die "Image $image_name not found in catalog";
 	}
 
-	print "Getting catalog item ".$image_name."...";
-	STDOUT->flush();
+	notify($ERRORS{'DEBUG'}, 0, "Getting catalog item $image_name");
     $req = HTTP::Request->new(GET => $catalogItem);
     $response = $self->_request($req);
-	print "done\n";
 
 	return $self->_xpath_wrap($response->content, '//ns:Entity[@type=\'application/vnd.vmware.vcloud.vAppTemplate+xml\']/@href');
 }
@@ -804,16 +807,14 @@ sub load
 	}
 	
 	# Enable SSH login to VM through the public interface
-	print "Enabling SSH login to VM through public interface...";
-	STDOUT->flush();
+	notify($ERRORS{'DEBUG'}, 0, "Enabling SSH login to VM $vAppName through public interface");
 	my $ssh = Net::SSH::Perl->new($self->{IpAddress}, identity_files => $self->{identity_files});
 	$ssh->login("vcloud");
 	$self->_ssh_cmd($ssh, "sudo sed -i s/'PasswordAuthentication no'/'PasswordAuthentication yes'/ /etc/ssh/sshd_config");
 	$self->_ssh_cmd($ssh, "sudo /etc/init.d/sshd restart");
 	$self->_ssh_cmd($ssh, "echo ".$self->{password}." | sudo passwd --stdin vcloud");
-	print "done\n";
 	
-	print "Public IP Address: ".$self->{PublicIpAddress}."\n";
+	notify($ERRORS{'OK'}, 0, "VM $vAppName is loaded on IP ".$self->{PublicIpAddress});
 		
 	return 1;
 }
@@ -827,6 +828,7 @@ sub _get_from_vdc
 
 	my $xpath = shift;
 	
+	notify($ERRORS{'DEBUG'}, 0, "Getting vDC");
     my $req = HTTP::Request->new(GET => $self->{vDC});
     my $response = $self->_request($req);
     return $self->_xpath($response->content, $xpath);
@@ -840,14 +842,12 @@ sub _get_template_desc
     }
 	my $vAppTemplate = shift;
 	
-	print "Getting template description...";
-	STDOUT->flush();
+	notify($ERRORS{'DEBUG'}, 0, "Getting template description");
     my $req = HTTP::Request->new(GET => $vAppTemplate);
     my $response = $self->_request($req);
-	print "done\n";
 
 	my $description = $self->_xpath_wrap($response->content, '//ns:Description');
-	print "\n$description\n";
+	notify($ERRORS{'OK'}, 0, "$description");
 }
 
 sub _ssh_cmd
@@ -860,6 +860,7 @@ sub _ssh_cmd
         die "subroutine can only be called as a module object method";
     }
 	
+	notify($ERRORS{'DEBUG'}, 0, "SSH: $cmd");
 	my($stdout, $stderr, $exit) = $ssh->cmd($cmd);
 	if ($exit != 0) {
 		die $stderr;
