@@ -55,6 +55,7 @@ use warnings;
 use diagnostics;
 use English qw( -no_match_vars );
 use VCL::utils;
+
 use HTTP::Request;
 use HTTP::Request::Common;
 use HTTP::Cookies;
@@ -75,8 +76,10 @@ our $ua;
 use constant vCLOUD => 'https://services.vcloudexpress.terremark.com/api';
 use constant vCLOUD_API => 'v0.8a-ext1.6';
 use constant vCLOUD_RETRIES => 0;
-use constant vCLOUD_IMAGE => 'CentOS 5 (32-bit)';
 use constant vCLOUD_NS => 'http://www.vmware.com/vcloud/v0.8';
+use constant vCLOUD_USERNAME => '<username>';
+use constant vCLOUD_PASSWORD => '<password>';
+use constant vCLOUD_KEY => '/etc/vcl/vcloud.pem';
 use constant TIMEOUT_DEPLOY_MINS => 10;
 use constant TIMEOUT_POWER_ON_MINS => 5;
 use constant TIMEOUT_POWER_OFF_MINS => 5;
@@ -85,17 +88,7 @@ use constant use_intantiation_params => 0;
 
 ##############################################################################
 
-
-#///////////////////////////////////////////////////////////////////////////// 
-=head2 new
-        
- Parameters  : username => '<username>', password => '<password>'
- Returns     : Terremark
- Description : Constructor for the Terremark package
-
-=cut
-
-sub new {
+ sub new {
    my($class, %args) = @_;
  
    my $self = bless({}, $class);
@@ -105,7 +98,7 @@ sub new {
    $self->{identity_files} = $args{identity_files};
  
    return $self;
-}
+ }
 
 #///////////////////////////////////////////////////////////////////////////// 
 =head2 initialize
@@ -125,7 +118,7 @@ sub initialize {
 		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
 		return;
 	}
-        
+    
 	$cookie_jar = HTTP::Cookies->new(
     file => "$ENV{'HOME'}/lwp_cookies.dat",
 	    autosave => 1,
@@ -203,9 +196,9 @@ sub _login()
 	
     my $req = HTTP::Request->new(POST => vCLOUD.'/'.vCLOUD_API.'/login');
     $req->header('Content-Length' => 0);
-    $req->authorization_basic($self->{username}, $self->{password});
+    $req->authorization_basic(vCLOUD_USERNAME, vCLOUD_PASSWORD);
 
-	notify($ERRORS{'DEBUG'}, 0, "Login ".$self->{username});
+	notify($ERRORS{'DEBUG'}, 0, "Login ".vCLOUD_USERNAME);
     my $response = $ua->request($req);
     if (!$response->is_success) {
 		notify($ERRORS{'CRITICAL'}, 0, "Login failure");
@@ -334,6 +327,51 @@ sub _xpath
 	}
 	
 	return $value;	
+}
+
+sub _ssh_cmd
+{
+	my $self = shift;
+	my $ssh = shift;
+	my $cmd = shift;
+
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
+	
+	notify($ERRORS{'DEBUG'}, 0, "SSH: $cmd");
+	my($stdout, $stderr, $exit) = $ssh->cmd($cmd);
+	if ($exit != 0) {
+		notify($ERRORS{'CRITICAL'}, 0, $stderr);
+		return;
+	}
+	
+	return 1;
+}
+
+sub _get_from_vdc
+{
+	my $self = shift;
+	my $xpath = shift;
+	my $debug = 1;
+	$debug = shift if @_;
+
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
+
+	
+	notify($ERRORS{'DEBUG'}, 0, "Getting vDC");
+    my $req = HTTP::Request->new(GET => $self->{vDC});
+    my $response = $self->_request($req);
+	if (!defined($response)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to get vDC: ".$self->{vDC});
+		return;
+	}
+
+    return $self->_xpath($response->content, $xpath, $debug);
 }
 
 #///////////////////////////////////////////////////////////////////////////// 
@@ -801,7 +839,7 @@ sub power_off
 
 =head2 does_image_exist
 
- Parameters  : imagename
+ Parameters  : none
  Returns     : 0 or 1
  Description : Searches the catalog for requested image
                returns 1 if found or 0 if not
@@ -817,36 +855,14 @@ sub does_image_exist
 		return;
 	}
 
-    # get the image name, first try passed argument, then data
-    my $image_name = shift;
-    $image_name = vCLOUD_IMAGE if !$image_name;
-    if (!$image_name) {
-		notify($ERRORS{'CRITICAL'}, 0, "unable to determine image name");
-		return;
-    }
+	my $image_name = $self->data->get_image_prettyname();
 
-    my $req = HTTP::Request->new(GET => $self->{catalog});
-	notify($ERRORS{'DEBUG'}, 0, "Getting catalog");
-    my $response = $self->_request($req);
-	if (!defined($response)) {
-		notify($ERRORS{'CRITICAL'}, 0, "Failed to get catalog");
+	my $vapp_template = $self->_get_vapp_template($image_name);
+	if (!defined($vapp_template) {
 		return;
 	}
-
-	# look for the image name in the catalog
-	my $catalogItem = $self->_xpath($response->content, '//ns:CatalogItem[@name=\''.$image_name.'\']/@href', 1);
-	if (!$catalogItem) {
-		notify($ERRORS{'CRITICAL'}, 0, "Image $image_name not found in catalog");
-		return;
-	}
-
-	# get detailed information on the catalog item
-    $req = HTTP::Request->new(GET => $catalogItem);
-    $response = $self->_request($req);
-	if (!defined($response)) {
-		notify($ERRORS{'CRITICAL'}, 0, "Failed to get catalog item");
-		return;
-	}
+	
+	notify($ERRORS{'OK'}, 0, "The Image $image_name exists");
 
 	return 1;
 }
@@ -855,7 +871,7 @@ sub does_image_exist
 
 =head2 _get_vapp_template
 
- Parameters  : imagename
+ Parameters  : none
  Returns     : URL to the vAppTemplate
  Description : Searches the catalog for requested image
 
@@ -870,13 +886,7 @@ sub _get_vapp_template
 		return;
 	}
 
-    # Get the image name, first try passed argument, then data
-    my $image_name = shift;
-    $image_name = vCLOUD_IMAGE if !$image_name;
-    if (!$image_name) {
-		notify($ERRORS{'CRITICAL'}, 0, "unable to determine image name");
-		return;
-    }
+	my $image_name = shift;
 
 	my $catalog = $self->_get_from_vdc('//ns:Link[@type=\'application/vnd.vmware.vcloud.catalog+xml\']/@href');
 	if (!defined($catalog)) {
@@ -909,6 +919,32 @@ sub _get_vapp_template
 	return $self->_xpath($response->content, '//ns:Entity[@type=\'application/vnd.vmware.vcloud.vAppTemplate+xml\']/@href', 1);
 }
 
+sub _get_template_desc
+{
+	my $self = shift;
+	my $vAppTemplate = shift;
+
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
+	
+	notify($ERRORS{'DEBUG'}, 0, "Getting template description");
+    my $req = HTTP::Request->new(GET => $vAppTemplate);
+    my $response = $self->_request($req);
+	if (!defined($response)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to get template description");
+		return;
+	}
+
+	my $description = $self->_xpath($response->content, '//ns:Description', 1);
+	if (!defined($description)) {
+		return;
+	}
+
+	notify($ERRORS{'OK'}, 0, "$description");
+}
+
 #///////////////////////////////////////////////////////////////////////////// 
 =head2 load
         
@@ -920,9 +956,12 @@ sub _get_vapp_template
 
 sub load
 {
-    my($self, %args) = @_;
-#	my $self = shift;
-	my $vAppName = $args{vAppName};
+	my $self = shift;
+	my $request_id            = $self->data->get_request_id();
+	my $reservation_id        = $self->data->get_reservation_id();
+	my $computer_id           = $self->data->get_computer_id();
+	my $computer_shortname    = $self->data->get_computer_short_name;
+	my $image_name            = $self->data->get_image_prettyname;
 
 	if (ref($self) !~ /tmrk/i) {
 		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
@@ -930,16 +969,16 @@ sub load
 	}
 
 	# Look to see if the vApp already exists
-	my $vApp = $self->_get_from_vdc('//ns:ResourceEntity[@type=\'application/vnd.vmware.vcloud.vApp+xml\' and @name=\''.$vAppName.'\']/@href', 0);
+	my $vApp = $self->_get_from_vdc('//ns:ResourceEntity[@type=\'application/vnd.vmware.vcloud.vApp+xml\' and @name=\''.$computer_shortname.'\']/@href', 0);
 	if (!$vApp) {
 		# get the image template
-		my $vAppTemplate = $self->_get_vapp_template;
+		my $vAppTemplate = $self->_get_vapp_template($image_name);
 
 		# create the VM
-		$self->_create_vm($vAppName, $vAppTemplate);
+		$self->_create_vm($computer_shortname, $vAppTemplate);
 		
 		# should be able to find the vApp now
-		$vApp = $self->_get_from_vdc('//ns:ResourceEntity[@type=\'application/vnd.vmware.vcloud.vApp+xml\' and @name=\''.$vAppName.'\']/@href');
+		$vApp = $self->_get_from_vdc('//ns:ResourceEntity[@type=\'application/vnd.vmware.vcloud.vApp+xml\' and @name=\''.$computer_shortname.'\']/@href');
 		if (!defined($vApp)) {
 			notify($ERRORS{'CRITICAL'}, 0, "could not get vApp after creating VM");
 			return;
@@ -972,89 +1011,75 @@ sub load
 	if (!$self->_is_connected_internet) {
 		return if (!$self->_connect_to_internet(22));
 	}
-	
-	# Enable SSH login to VM through the public interface
-	notify($ERRORS{'DEBUG'}, 0, "Enabling SSH login to VM $vAppName through public interface");
-	my $ssh = Net::SSH::Perl->new($self->{IpAddress}, identity_files => $self->{identity_files});
-	$ssh->login("vcloud");
-	$self->_ssh_cmd($ssh, "sudo sed -i s/'PasswordAuthentication no'/'PasswordAuthentication yes'/ /etc/ssh/sshd_config");
-	$self->_ssh_cmd($ssh, "sudo /etc/init.d/sshd restart");
-	$self->_ssh_cmd($ssh, "echo ".$self->{password}." | sudo passwd --stdin vcloud");
-	
-	notify($ERRORS{'OK'}, 0, "VM $vAppName is loaded on IP ".$self->{PublicIpAddress});
+
+	# $self->_enable_external_ssh;
+
+	notify($ERRORS{'OK'}, 0, "VM $computer_shortname is loaded");
 		
 	return 1;
 }
 
-sub _get_from_vdc
+
+sub _enable_external_ssh
 {
 	my $self = shift;
-	my $xpath = shift;
-	my $debug = 1;
-	$debug = shift if @_;
 
 	if (ref($self) !~ /tmrk/i) {
 		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
 		return;
 	}
 
+	my @identity_files = (vCLOUD_KEY);
 	
-	notify($ERRORS{'DEBUG'}, 0, "Getting vDC");
-    my $req = HTTP::Request->new(GET => $self->{vDC});
-    my $response = $self->_request($req);
-	if (!defined($response)) {
-		notify($ERRORS{'CRITICAL'}, 0, "Failed to get vDC: ".$self->{vDC});
-		return;
-	}
+	# Enable SSH login to VM through the public interface
+	notify($ERRORS{'DEBUG'}, 0, "Enabling SSH login to VM on ".$self->{IpAddress}." through public interface");
 
-    return $self->_xpath($response->content, $xpath, $debug);
-}
+	my $ssh = Net::SSH::Perl->new($self->{IpAddress}, identity_files => \@identity_files);
 
-sub _get_template_desc
-{
-	my $self = shift;
-	my $vAppTemplate = shift;
-
-	if (ref($self) !~ /tmrk/i) {
-		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
-		return;
-	}
+	$ssh->login("vcloud");
+	$self->_ssh_cmd($ssh, "sudo sed -i s/'PasswordAuthentication no'/'PasswordAuthentication yes'/ /etc/ssh/sshd_config");
+	$self->_ssh_cmd($ssh, "sudo /etc/init.d/sshd restart");
+	$self->_ssh_cmd($ssh, "echo ".vCLOUD_PASSWORD." | sudo passwd --stdin vcloud");
 	
-	notify($ERRORS{'DEBUG'}, 0, "Getting template description");
-    my $req = HTTP::Request->new(GET => $vAppTemplate);
-    my $response = $self->_request($req);
-	if (!defined($response)) {
-		notify($ERRORS{'CRITICAL'}, 0, "Failed to get template description");
-		return;
-	}
+	notify($ERRORS{'OK'}, 0, "external SSH enabled on VM $computer_shortname via IP ".$self->{PublicIpAddress});
 
-	my $description = $self->_xpath($response->content, '//ns:Description', 1);
-	if (!defined($description)) {
-		return;
-	}
-
-	notify($ERRORS{'OK'}, 0, "$description");
-}
-
-sub _ssh_cmd
-{
-	my $self = shift;
-	my $ssh = shift;
-	my $cmd = shift;
-
-	if (ref($self) !~ /tmrk/i) {
-		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
-		return;
-	}
-	
-	notify($ERRORS{'DEBUG'}, 0, "SSH: $cmd");
-	my($stdout, $stderr, $exit) = $ssh->cmd($cmd);
-	if ($exit != 0) {
-		notify($ERRORS{'CRITICAL'}, 0, $stderr);
-		return;
-	}
-	
 	return 1;
 }
+
+#/////////////////////////////////////////////////////////////////////////
+
+=head2 node_status
+
+ Parameters  : $nodename, $log
+ Returns     : array of related status checks
+ Description : checks on sshd, currentimage
+
+=cut
+
+sub node_status {
+	my $self = shift;
+
+	my $log;
+
+	# Check if subroutine was called as a class method
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'OK'}, 0, "subroutine was called as a function");
+		if (ref($self) eq 'HASH') {
+			$log = $self->{logfile};
+			notify($ERRORS{'DEBUG'}, $log, "self is a hash reference");
+		}
+		# Check if node_status returned an array ref
+		elsif (ref($self) eq 'ARRAY') {
+			notify($ERRORS{'DEBUG'}, $log, "self is a array reference");
+		}
+	}
+	else {
+	}
+
+	notify($ERRORS{'CRITICAL'},    0, "this method is not supported yet");
+
+	return;
+
+} ## end sub node_status
 
 1;
