@@ -60,7 +60,7 @@ use HTTP::Request;
 use HTTP::Request::Common;
 use HTTP::Cookies;
 use LWP::UserAgent;
-use IO::Socket::SSL;
+#use IO::Socket::SSL;
 use XML::LibXML;
 use Net::SSH::Perl;
 
@@ -87,18 +87,6 @@ use constant POLLING_INTERVAL_SECS => 20;
 use constant use_intantiation_params => 0;
 
 ##############################################################################
-
- sub new {
-   my($class, %args) = @_;
- 
-   my $self = bless({}, $class);
- 
-   $self->{username} = $args{username};
-   $self->{password} = $args{password};
-   $self->{identity_files} = $args{identity_files};
- 
-   return $self;
- }
 
 #///////////////////////////////////////////////////////////////////////////// 
 =head2 initialize
@@ -858,7 +846,7 @@ sub does_image_exist
 	my $image_name = $self->data->get_image_prettyname();
 
 	my $vapp_template = $self->_get_vapp_template($image_name);
-	if (!defined($vapp_template) {
+	if (!defined($vapp_template)) {
 		return;
 	}
 	
@@ -1012,10 +1000,26 @@ sub load
 		return if (!$self->_connect_to_internet(22));
 	}
 
+	notify($ERRORS{'DEBUG'}, 0, "Removing old hosts entry");
+	my $sedoutput = `sed -i "/.*\\b$computer_shortname\$/d" /etc/hosts`;
+	notify($ERRORS{'DEBUG'}, 0, $sedoutput);
+
+	# Add new entry to /etc/hosts for $computer_shortname
+	`echo -e $self->{IpAddress}."\t$computer_shortname" >> /etc/hosts`;
+
 	# $self->_enable_external_ssh;
 
-	notify($ERRORS{'OK'}, 0, "VM $computer_shortname is loaded");
-		
+	# Set IP info
+	if (update_computer_address($computer_id, $self->{PublicIpAddress})) {
+		notify($ERRORS{'DEBUG'}, 0, "$computer_shortname has public IP ".$self->{PublicIpAddress});
+	}
+	else {
+		notify($ERRORS{'CRITICAL'}, 0, "could not update address for $computer_shortname");
+		return;
+	}
+
+	notify($ERRORS{'OK'}, 0, "VM $computer_shortname is loaded with $image_name");
+
 	return 1;
 }
 
@@ -1041,7 +1045,7 @@ sub _enable_external_ssh
 	$self->_ssh_cmd($ssh, "sudo /etc/init.d/sshd restart");
 	$self->_ssh_cmd($ssh, "echo ".vCLOUD_PASSWORD." | sudo passwd --stdin vcloud");
 	
-	notify($ERRORS{'OK'}, 0, "external SSH enabled on VM $computer_shortname via IP ".$self->{PublicIpAddress});
+	notify($ERRORS{'OK'}, 0, "external SSH enabled on IP ".$self->{PublicIpAddress});
 
 	return 1;
 }
@@ -1059,26 +1063,110 @@ sub _enable_external_ssh
 sub node_status {
 	my $self = shift;
 
-	my $log;
+	my $requestedimagename = 0;
+	my $image_os_type      = 0;
+	my $computer_shortname = 0;
+	my $identity_keys      = vCLOUD_KEY;
+	my $log                = 0;
+	my $computer_node_name = 0;
 
 	# Check if subroutine was called as a class method
 	if (ref($self) !~ /tmrk/i) {
 		notify($ERRORS{'OK'}, 0, "subroutine was called as a function");
 		if (ref($self) eq 'HASH') {
 			$log = $self->{logfile};
-			notify($ERRORS{'DEBUG'}, $log, "self is a hash reference");
-		}
-		# Check if node_status returned an array ref
+			#notify($ERRORS{'DEBUG'}, $log, "self is a hash reference");
+
+			$requestedimagename = $self->{imagerevision}->{imagename};
+			$image_os_type      = $self->{image}->{OS}->{type};
+			$computer_node_name = $self->{computer}->{hostname};
+
+		} ## end if (ref($self) eq 'HASH')
+		    # Check if node_status returned an array ref
 		elsif (ref($self) eq 'ARRAY') {
 			notify($ERRORS{'DEBUG'}, $log, "self is a array reference");
 		}
+
+		$computer_shortname = $1 if ($computer_node_name =~ /([-_a-zA-Z0-9]*)(\.?)/);
 	}
 	else {
+
+		# try to contact vm
+		# $self->data->get_request_data;
+		# get state of vm
+		$requestedimagename = $self->data->get_image_name;
+		$image_os_type      = $self->data->get_image_os_type;
+		$computer_shortname = $self->data->get_computer_short_name;
 	}
 
-	notify($ERRORS{'CRITICAL'},    0, "this method is not supported yet");
+	notify($ERRORS{'OK'},    0, "Entering node_status, checking status of $computer_shortname");
+	notify($ERRORS{'DEBUG'}, 0, "requeseted image name: $requestedimagename");
 
-	return;
+	my ($hostnode);
+
+	# Create a hash to store status components
+	my %status;
+
+	# Initialize all hash keys here to make sure they're defined
+	$status{status}       = 0;
+	$status{currentimage} = 0;
+	$status{ping}         = 0;
+	$status{ssh}          = 0;
+	$status{image_match}  = 0;
+
+	# Check if node is pingable
+	notify($ERRORS{'DEBUG'}, 0, "checking if $computer_shortname is pingable");
+	if (_pingnode($computer_shortname)) {
+		$status{ping} = 1;
+		notify($ERRORS{'OK'}, 0, "$computer_shortname is pingable ($status{ping})");
+	}
+	else {
+		notify($ERRORS{'OK'}, 0, "$computer_shortname is not pingable ($status{ping})");
+		return $status{status};
+	}
+
+	notify($ERRORS{'DEBUG'}, 0, "Trying to ssh...");
+
+	#can I ssh into it
+	my $sshd = _sshd_status($computer_shortname, $requestedimagename, $image_os_type);
+
+	#is it running the requested image
+	if ($sshd eq "on") {
+		$status{ssh} = 1;
+
+		notify($ERRORS{'DEBUG'}, 0, "SSH good, trying to query image name");
+
+		############################################
+		# TO-DO: NEED TO GET CURRENT IMAGE FROM API
+		############################################
+		$status{currentimage} = $requestedimagename;
+
+		notify($ERRORS{'DEBUG'}, 0, "Image name: $status{currentimage}");
+
+		if ($status{currentimage}) {
+			chomp($status{currentimage});
+			if ($status{currentimage} =~ /$requestedimagename/) {
+				$status{image_match} = 1;
+				notify($ERRORS{'OK'}, 0, "$computer_shortname is loaded with requestedimagename $requestedimagename");
+			}
+			else {
+				notify($ERRORS{'OK'}, 0, "$computer_shortname reports current image is currentimage= $status{currentimage} requestedimagename= $requestedimagename");
+			}
+		} ## end if ($status{currentimage})
+	} ## end if ($sshd eq "on")
+
+	# Determine the overall machine status based on the individual status results
+	if ($status{ssh} && $status{image_match}) {
+		$status{status} = 'READY';
+	}
+	else {
+		$status{status} = 'RELOAD';
+	}
+
+	notify($ERRORS{'DEBUG'}, 0, "status set to $status{status}");
+
+	notify($ERRORS{'DEBUG'}, 0, "returning node status hash reference (\$node_status->{status}=$status{status})");
+	return \%status;
 
 } ## end sub node_status
 
