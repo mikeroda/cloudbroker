@@ -62,7 +62,6 @@ use HTTP::Cookies;
 use LWP::UserAgent;
 #use IO::Socket::SSL;
 use XML::LibXML;
-use Net::SSH::Perl;
 
 our $cookie_jar;
 our $ua;
@@ -315,27 +314,6 @@ sub _xpath
 	}
 	
 	return $value;	
-}
-
-sub _ssh_cmd
-{
-	my $self = shift;
-	my $ssh = shift;
-	my $cmd = shift;
-
-	if (ref($self) !~ /tmrk/i) {
-		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
-		return;
-	}
-	
-	notify($ERRORS{'DEBUG'}, 0, "SSH: $cmd");
-	my($stdout, $stderr, $exit) = $ssh->cmd($cmd);
-	if ($exit != 0) {
-		notify($ERRORS{'CRITICAL'}, 0, $stderr);
-		return;
-	}
-	
-	return 1;
 }
 
 sub _get_from_vdc
@@ -1005,9 +983,13 @@ sub load
 	notify($ERRORS{'DEBUG'}, 0, $sedoutput);
 
 	# Add new entry to /etc/hosts for $computer_shortname
-	`echo -e $self->{IpAddress}."\t$computer_shortname" >> /etc/hosts`;
+	#
+	# TO-DO: should be using the Private IP here but VCL won't be able to reach
+	# the host on the private IP unless the Cisco VPN agent is running
+	#
+	`echo -e $self->{PublicIpAddress}"\t$computer_shortname" >> /etc/hosts`;
 
-	# $self->_enable_external_ssh;
+	$self->_enable_root_login;
 
 	# Set IP info
 	if (update_computer_address($computer_id, $self->{PublicIpAddress})) {
@@ -1024,7 +1006,7 @@ sub load
 }
 
 
-sub _enable_external_ssh
+sub _enable_root_login
 {
 	my $self = shift;
 
@@ -1033,20 +1015,41 @@ sub _enable_external_ssh
 		return;
 	}
 
-	my @identity_files = (vCLOUD_KEY);
+	my $computer_shortname   = $self->data->get_computer_short_name;
+    my $management_node_keys = $self->data->get_management_node_keys();
+    my $command;
+    my $user = "vcloud";
+
+    $command = "sudo mkdir -m 700 /root/.ssh";
+    run_ssh_command($computer_shortname, $management_node_keys, $command, $user);
+    
+    $command = "sudo cp ~vcloud/.ssh/authorized_keys /root/.ssh/";
+    if (run_ssh_command($computer_shortname, $management_node_keys, $command, $user)) {
+		notify($ERRORS{'DEBUG'}, 0, "Setup root authorized_keys on $computer_shortname");
+	}
+	else {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to setup root authorized_keys on $computer_shortname ");
+		return;
+	}
+    
+    $command = "sudo sed -i s/'PermitRootLogin no'/'PermitRootLogin yes'/ /etc/ssh/sshd_config";
+    if (run_ssh_command($computer_shortname, $management_node_keys, $command, $user)) {
+		notify($ERRORS{'DEBUG'}, 0, "Enabled root login on $computer_shortname");
+	}
+	else {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to enable root login on $computer_shortname ");
+		return;
+	}
+
+    $command = "sudo /etc/init.d/sshd restart";
+    if (run_ssh_command($computer_shortname, $management_node_keys, $command, $user)) {
+		notify($ERRORS{'DEBUG'}, 0, "Restarted sshd on $computer_shortname");
+	}
+	else {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to restart sshd on $computer_shortname ");
+		return;
+	}
 	
-	# Enable SSH login to VM through the public interface
-	notify($ERRORS{'DEBUG'}, 0, "Enabling SSH login to VM on ".$self->{IpAddress}." through public interface");
-
-	my $ssh = Net::SSH::Perl->new($self->{IpAddress}, identity_files => \@identity_files);
-
-	$ssh->login("vcloud");
-	$self->_ssh_cmd($ssh, "sudo sed -i s/'PasswordAuthentication no'/'PasswordAuthentication yes'/ /etc/ssh/sshd_config");
-	$self->_ssh_cmd($ssh, "sudo /etc/init.d/sshd restart");
-	$self->_ssh_cmd($ssh, "echo ".vCLOUD_PASSWORD." | sudo passwd --stdin vcloud");
-	
-	notify($ERRORS{'OK'}, 0, "external SSH enabled on IP ".$self->{PublicIpAddress});
-
 	return 1;
 }
 
