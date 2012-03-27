@@ -25,7 +25,7 @@ INSERT INTO `vcl`.`OS`
 `sourcepath` ,
 `moduleid` )
 VALUES
-('39', 'rhel5api', 'Red Hat Enterprise Linux 5 (API)', 'linux', 'none', NULL, '26');
+('39', 'rhel5api', 'Red Hat Enterprise Linux 5 (API)', 'linux', 'none', NULL, '5');
 
 INSERT INTO `vcl`.`provisioningOSinstalltype`
 (`provisioningid` ,
@@ -59,7 +59,7 @@ INSERT INTO `vcl`.`image`
 `usage` ,
 `basedoffrevisionid`)
 VALUES
-('8' , 'tmrk-centos5-32bit', 'CentOS 5 (32-bit)', '1', '1', '22', NULL,
+('8' , 'tmrk-centos5-32bit', 'CentOS 5 (32-bit)', '1', '1', '39', NULL,
 '512', '1', '1024', '100', NULL , '5', '0', '0', NOW(), '1', '0', 'vcl', '1500',
 'x86', NULL , NULL , '0'
 );
