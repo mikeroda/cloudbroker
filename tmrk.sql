@@ -8,6 +8,16 @@ VALUES
 ('26', 'terremark', 'Terremark Provisioning Module', 
  'Provisioning Module for Terremark vCloud Express API v0.8a-ext1.6', 'VCL::Module::Provisioning::tmrk');
 
+INSERT INTO `vcl`.`module`
+(`id` ,
+`name` ,
+`prettyname` ,
+`description` ,
+`perlpackage` )
+VALUES
+('27', 'os_linux_tmrk', 'Linux OS Module for Terremark', 
+ 'Linux OS Module for Terremark vCloud Express virtual machines', 'VCL::Module::OS::Linux::Linux_tmrk');
+
 INSERT INTO `vcl`.`provisioning`
 (`id` ,
 `name` ,
@@ -25,7 +35,7 @@ INSERT INTO `vcl`.`OS`
 `sourcepath` ,
 `moduleid` )
 VALUES
-('39', 'rhel5api', 'Red Hat Enterprise Linux 5 (API)', 'linux', 'none', NULL, '5');
+('39', 'rhel5api', 'Red Hat Enterprise Linux 5 (API)', 'linux', 'none', NULL, '27');
 
 INSERT INTO `vcl`.`provisioningOSinstalltype`
 (`provisioningid` ,
@@ -60,7 +70,7 @@ INSERT INTO `vcl`.`image`
 `basedoffrevisionid`)
 VALUES
 ('8' , 'tmrk-centos5-32bit', 'CentOS 5 (32-bit)', '1', '1', '39', NULL,
-'512', '1', '1024', '100', NULL , '5', '0', '0', NOW(), '1', '0', 'vcl', '1500',
+'512', '1', '1000', '100', NULL , '5', '0', '0', NOW(), '1', '0', 'vcl', '1500',
 'x86', NULL , NULL , '0'
 );
 

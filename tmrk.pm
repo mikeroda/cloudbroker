@@ -989,8 +989,6 @@ sub load
 	#
 	`echo -e $self->{PublicIpAddress}"\t$computer_shortname" >> /etc/hosts`;
 
-	$self->_enable_root_login;
-
 	# Set IP info
 	if (update_computer_address($computer_id, $self->{PublicIpAddress})) {
 		notify($ERRORS{'DEBUG'}, 0, "$computer_shortname has public IP ".$self->{PublicIpAddress});
@@ -1002,54 +1000,6 @@ sub load
 
 	notify($ERRORS{'OK'}, 0, "VM $computer_shortname is loaded with $image_name");
 
-	return 1;
-}
-
-
-sub _enable_root_login
-{
-	my $self = shift;
-
-	if (ref($self) !~ /tmrk/i) {
-		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
-		return;
-	}
-
-	my $computer_shortname   = $self->data->get_computer_short_name;
-    my $management_node_keys = $self->data->get_management_node_keys();
-    my $command;
-    my $user = "vcloud";
-
-    $command = "sudo mkdir -m 700 /root/.ssh";
-    run_ssh_command($computer_shortname, $management_node_keys, $command, $user);
-    
-    $command = "sudo cp ~vcloud/.ssh/authorized_keys /root/.ssh/";
-    if (run_ssh_command($computer_shortname, $management_node_keys, $command, $user)) {
-		notify($ERRORS{'DEBUG'}, 0, "Setup root authorized_keys on $computer_shortname");
-	}
-	else {
-		notify($ERRORS{'CRITICAL'}, 0, "Failed to setup root authorized_keys on $computer_shortname ");
-		return;
-	}
-    
-    $command = "sudo sed -i s/'PermitRootLogin no'/'PermitRootLogin yes'/ /etc/ssh/sshd_config";
-    if (run_ssh_command($computer_shortname, $management_node_keys, $command, $user)) {
-		notify($ERRORS{'DEBUG'}, 0, "Enabled root login on $computer_shortname");
-	}
-	else {
-		notify($ERRORS{'CRITICAL'}, 0, "Failed to enable root login on $computer_shortname ");
-		return;
-	}
-
-    $command = "sudo /etc/init.d/sshd restart";
-    if (run_ssh_command($computer_shortname, $management_node_keys, $command, $user)) {
-		notify($ERRORS{'DEBUG'}, 0, "Restarted sshd on $computer_shortname");
-	}
-	else {
-		notify($ERRORS{'CRITICAL'}, 0, "Failed to restart sshd on $computer_shortname ");
-		return;
-	}
-	
 	return 1;
 }
 
