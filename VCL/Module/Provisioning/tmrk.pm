@@ -60,7 +60,6 @@ use HTTP::Request;
 use HTTP::Request::Common;
 use HTTP::Cookies;
 use LWP::UserAgent;
-#use IO::Socket::SSL;
 use XML::LibXML;
 
 our $cookie_jar;
@@ -76,8 +75,6 @@ use constant vCLOUD => 'https://services.vcloudexpress.terremark.com/api';
 use constant vCLOUD_API => 'v0.8a-ext1.6';
 use constant vCLOUD_RETRIES => 0;
 use constant vCLOUD_NS => 'http://www.vmware.com/vcloud/v0.8';
-use constant vCLOUD_USERNAME => '<username>';
-use constant vCLOUD_PASSWORD => '<password>';
 use constant vCLOUD_KEY => '/etc/vcl/vcloud.pem';
 use constant TIMEOUT_DEPLOY_MINS => 10;
 use constant TIMEOUT_POWER_ON_MINS => 5;
@@ -183,9 +180,9 @@ sub _login()
 	
     my $req = HTTP::Request->new(POST => vCLOUD.'/'.vCLOUD_API.'/login');
     $req->header('Content-Length' => 0);
-    $req->authorization_basic(vCLOUD_USERNAME, vCLOUD_PASSWORD);
+    $req->authorization_basic($TMRK_USER, $TMRK_PASS);
 
-	notify($ERRORS{'DEBUG'}, 0, "Login ".vCLOUD_USERNAME);
+	notify($ERRORS{'DEBUG'}, 0, "Login ".$TMRK_USER);
     my $response = $ua->request($req);
     if (!$response->is_success) {
 		notify($ERRORS{'CRITICAL'}, 0, "Login failure");
