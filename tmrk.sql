@@ -35,7 +35,7 @@ INSERT INTO `vcl`.`OS`
 `sourcepath` ,
 `moduleid` )
 VALUES
-('39', 'rhel5api', 'Red Hat Enterprise Linux 5 (API)', 'linux', 'none', NULL, '27');
+('39', 'rhel5tmrk', 'Red Hat Enterprise Linux 5 (Terremark)', 'linux', 'none', NULL, '27');
 
 INSERT INTO `vcl`.`provisioningOSinstalltype`
 (`provisioningid` ,
