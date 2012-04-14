@@ -182,6 +182,45 @@ sub _pre_reserve {
 =cut
 
 sub grant_access {
+	my $self = shift;
+	if (ref($self) !~ /linux/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return 0;
+	}
+
+	my $user                 = $self->data->get_user_login_id();
+	my $computer_shortname   = $self->data->get_computer_short_name;
+    my $management_node_keys = $self->data->get_management_node_keys();
+
+	notify($ERRORS{'OK'}, 0, "In grant_access routine $user, $computer_shortname");
+	my @sshcmd;
+	my $clear_extsshd = "sed -i -e \"/^AllowUsers .*/d\" /etc/ssh/sshd_config";
+	if (run_ssh_command($computer_shortname, $management_node_keys, $clear_extsshd, "root")) {
+		notify($ERRORS{'DEBUG'}, 0, "cleared AllowUsers directive from sshd_config");
+	}
+	else {
+		notify($ERRORS{'CRITICAL'}, 0, "failed to clear AllowUsers directive from sshd_config");
+	}
+
+	my $cmd = "echo \"AllowUsers vcloud root $user\" >> /etc/ssh/sshd_config";
+	if (run_ssh_command($computer_shortname, $management_node_keys, $cmd, "root")) {
+		notify($ERRORS{'DEBUG'}, 0, "added $user to AllowUsers directive in sshd_config");
+	}
+	else {
+		notify($ERRORS{'CRITICAL'}, 0, "failed to add $user to AllowUsers directive in sshd_config");
+		return 0;
+	}
+
+    $cmd = "sudo /etc/init.d/sshd restart";
+    if (run_ssh_command($computer_shortname, $management_node_keys, $cmd, $user)) {
+		notify($ERRORS{'DEBUG'}, 0, "Restarted sshd on $computer_shortname");
+	}
+	else {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to restart sshd on $computer_shortname ");
+		return;
+	}
+
+	notify($ERRORS{'OK'}, 0, "re-started sshd on $computer_shortname");
 	return 1;
 } ## end sub grant_access
 
