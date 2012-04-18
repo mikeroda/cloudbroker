@@ -521,6 +521,52 @@ sub _create_vm
 	return 1;
 }
 
+#///////////////////////////////////////////////////////////////////////////// 
+=head2 _delete_vm
+        
+ Parameters  : URL to the vApp
+ Returns     : none
+ Description : Delete an existing Virtual Machine
+
+=cut
+
+sub _delete_vm
+{
+	my $self = shift;
+    my $vAppName = shift;
+    my $vApp = shift;
+
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
+
+    my $req = HTTP::Request->new(DELETE => $vApp);
+
+	notify($ERRORS{'DEBUG'}, 0, "Deleting VM $vAppName");
+	my $response = $self->_request($req);
+	if (!defined($response)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to delete VM $vAppName");
+		return;
+	}
+
+	my $status;
+	for (my $count = 0; $count <= TIMEOUT_DEPLOY_MINS * (60 / POLLING_INTERVAL_SECS); $count++) {
+		$req = HTTP::Request->new(GET => $vApp);
+    	$response = $self->_request($req);
+		if (!defined($response)) {
+			notify($ERRORS{'OK'}, 0, "VM $vAppName successfully deleted");
+			return 1;
+		}
+
+		sleep(POLLING_INTERVAL_SECS);
+	}
+	
+	notify($ERRORS{'WARNING'}, 0, "Timed out waiting for VM $vAppName to delete");
+
+	return;
+}
+
 sub _connect_to_internet
 {
 	my $self = shift;
@@ -612,6 +658,114 @@ sub _connect_to_internet
 	return 1;
 }
 
+sub _disconnect_from_internet
+{
+	my $self = shift;
+
+	if (ref($self) !~ /tmrk/i) {
+		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
+		return;
+	}
+
+	my $vAppName = shift;
+	my $vApp = shift;
+
+	notify($ERRORS{'DEBUG'}, 0, "Disconnecting VM $vAppName from internet service");
+
+	# get the private IP address of the VM
+	notify($ERRORS{'DEBUG'}, 0, "Getting IP Address of existing VM $vAppName");
+	my $req = HTTP::Request->new(GET => $vApp);
+   	my $response = $self->_request($req);
+	if (!defined($response)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to get vApp: $vApp");
+		return;
+	}
+	my $ipAddress = $self->_xpath($response->content, '//ns:NetworkConnection/ns:IpAddress', 1);
+	if (!defined($ipAddress)) {
+		return;
+	}
+
+	notify($ERRORS{'DEBUG'}, 0, "VM $vAppName has IP address $ipAddress");
+
+	my $internetServices = $self->_get_from_vdc('//ns:Link[@name=\'Internet Services\']/@href');
+	if (!defined($internetServices)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Unable to get Internet Services from vDC");
+		return;
+	}
+
+	notify($ERRORS{'DEBUG'}, 0, "Getting all internet services");
+    $req = HTTP::Request->new(GET => $internetServices);
+    $response = $self->_request($req);
+	if (!defined($response)) {
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to get internet services");
+		return;
+	}
+
+	my $parser = XML::LibXML->new();
+	my $doc = $parser->parse_string($response->content);
+
+	my $xc = XML::LibXML::XPathContext->new( $doc->documentElement()  );
+	$xc->registerNs('ns', 'urn:tmrk:vCloudExpressExtensions-1.6');
+
+	my @nodes = $xc->findnodes('//ns:InternetService/ns:Href');
+	foreach my $internetService (@nodes) {
+		my $xc_is = XML::LibXML::XPathContext->new( $internetService );
+		$xc_is->registerNs('ns', 'urn:tmrk:vCloudExpressExtensions-1.6');
+		my $id = $xc_is->findvalue('//ns:InternetService/ns:Id');
+		my $url = $xc_is->findvalue('//ns:InternetService/ns:Href');
+		my $PublicIpAddress = $xc_is->findvalue('//ns:PublicIpAddress/ns:Name');
+		my $PublicIpId = $xc_is->findvalue('//ns:PublicIpAddress/ns:Id');
+
+		notify($ERRORS{'DEBUG'}, 0, "Getting nodes on internet service $id");
+
+	    my $req = HTTP::Request->new(GET => $url."/nodeServices");
+	    my $response = $self->_request($req);
+		if (!defined($response)) {
+			notify($ERRORS{'CRITICAL'}, 0, "Failed to get: ".$url."/nodeServices");
+			return;
+		}
+
+		my $nodeIpAddress = $self->_xpath($response->content, '//ns:IpAddress', 1, 'urn:tmrk:vCloudExpressExtensions-1.6');
+		my $nodeService = $self->_xpath($response->content, '//ns:Href', 1, 'urn:tmrk:vCloudExpressExtensions-1.6');
+		my $nodeId = $self->_xpath($response->content, '//ns:Id', 1, 'urn:tmrk:vCloudExpressExtensions-1.6');
+
+  		if ($nodeIpAddress eq $ipAddress) {
+			notify($ERRORS{'DEBUG'}, 0, "Deleting node service $nodeId");
+		    $req = HTTP::Request->new(DELETE => $nodeService);
+    		$response = $self->_request($req);
+			if (!defined($response)) {
+				notify($ERRORS{'CRITICAL'}, 0, "Failed to delete node service: $nodeService");
+				return;
+			}
+		    sleep(15);
+			notify($ERRORS{'DEBUG'}, 0, "Successfully deleted node service $nodeId");
+
+			notify($ERRORS{'DEBUG'}, 0, "Deleting internet service on IP $PublicIpAddress");
+		    $req = HTTP::Request->new(DELETE => $url);
+    		$response = $self->_request($req);
+			if (!defined($response)) {
+				notify($ERRORS{'CRITICAL'}, 0, "Failed to delete internet service: $url");
+				return;
+			}
+		    sleep(15);
+			notify($ERRORS{'DEBUG'}, 0, "Successfully deleted internet service $id");
+
+			notify($ERRORS{'DEBUG'}, 0, "Releasing public IP $PublicIpAddress");
+		    $req = HTTP::Request->new(DELETE => vCLOUD.'/extensions/v1.6/publicIp/'.$PublicIpId);
+	   		$response = $self->_request($req);
+			if (!defined($response)) {
+				notify($ERRORS{'WARNING'}, 0, "Failed to release public IP: $PublicIpId");
+				return;
+			}
+			notify($ERRORS{'DEBUG'}, 0, "Successfully released public IP $PublicIpAddress");
+
+  			return 1;
+  		}
+   	}
+
+	return;
+}
+
 sub _is_connected_internet
 {
 	my $self = shift;
@@ -692,9 +846,10 @@ sub power_on
 		return;
 	}
 
+    my $vAppName = shift;
 	my $vApp = shift;
 	
-	notify($ERRORS{'DEBUG'}, 0, "Powering up VM");
+	notify($ERRORS{'DEBUG'}, 0, "Powering up VM $vAppName");
 	my $req = HTTP::Request->new(POST => $vApp.'/power/action/powerOn');
     $req->header('Content-Length' => 0);
    	my $response = $self->_request($req);
@@ -727,11 +882,11 @@ sub power_on
 	}
 
 	if ($status ne '4') {
-		notify($ERRORS{'CRITICAL'}, 0, "VM failed to power on");
+		notify($ERRORS{'CRITICAL'}, 0, "VM $vAppName failed to power");
 		return;
 	}
 
-	notify($ERRORS{'OK'}, 0, "VM successfully powered up");
+	notify($ERRORS{'OK'}, 0, "VM $vAppName successfully powered up");
 
 	return 1;
 }
@@ -754,24 +909,25 @@ sub power_off
 		return;
 	}
 
+    my $vAppName = shift;
 	my $vApp = shift;
 	
-	notify($ERRORS{'DEBUG'}, 0, "Powering down VM");
+	notify($ERRORS{'DEBUG'}, 0, "Powering down VM $vAppName");
 	my $req = HTTP::Request->new(POST => $vApp.'/power/action/powerOff');
     $req->header('Content-Length' => 0);
    	my $response = $self->_request($req);
 	if (!defined($response)) {
-		notify($ERRORS{'CRITICAL'}, 0, "Failed to power-off VM");
+		notify($ERRORS{'CRITICAL'}, 0, "Failed to power-off VM $vAppName");
 		return;
 	}
 
     sleep(30);
     my $status;
 	for (my $count = 0; $count <= TIMEOUT_POWER_OFF_MINS * (60 / POLLING_INTERVAL_SECS); $count++) {
-		$req = HTTP::Request->new(GET => $self->{vApp});
+		$req = HTTP::Request->new(GET => $vApp);
     	$response = $self->_request($req);
 		if (!defined($response)) {
-			notify($ERRORS{'CRITICAL'}, 0, "Failed to get vApp: ".$self->{vApp});
+			notify($ERRORS{'CRITICAL'}, 0, "Failed to get vApp: ".$vApp);
 			return;
 		}
 
@@ -789,11 +945,11 @@ sub power_off
 	}
 	
 	if ($status ne '2') {
-		notify($ERRORS{'CRITICAL'}, 0, "VM failed to power off");
+		notify($ERRORS{'CRITICAL'}, 0, "VM $vAppName failed to power off");
 		return;
 	}
 
-	notify($ERRORS{'OK'}, 0, "VM successfully powered down");
+	notify($ERRORS{'OK'}, 0, "VM $vAppName successfully powered down");
 	
 	return 1;
 }
@@ -925,6 +1081,7 @@ sub load
 	my $computer_id           = $self->data->get_computer_id();
 	my $computer_shortname    = $self->data->get_computer_short_name;
 	my $image_name            = $self->data->get_image_prettyname;
+	my $laststate_name        = $self->data->get_request_laststate_name;
 
 	if (ref($self) !~ /tmrk/i) {
 		notify($ERRORS{'CRITICAL'}, 0, "subroutine was called as a function, it must be called as a class method");
@@ -933,19 +1090,35 @@ sub load
 
 	# Look to see if the vApp already exists
 	my $vApp = $self->_get_from_vdc('//ns:ResourceEntity[@type=\'application/vnd.vmware.vcloud.vApp+xml\' and @name=\''.$computer_shortname.'\']/@href', 0);
-	if (!$vApp) {
-		# get the image template
-		my $vAppTemplate = $self->_get_vapp_template($image_name);
-
-		# create the VM
-		$self->_create_vm($computer_shortname, $vAppTemplate);
+	if ($vApp) {
+		# power down the VM first, if necessary
+		$self->power_off($computer_shortname, $vApp);
 		
-		# should be able to find the vApp now
-		$vApp = $self->_get_from_vdc('//ns:ResourceEntity[@type=\'application/vnd.vmware.vcloud.vApp+xml\' and @name=\''.$computer_shortname.'\']/@href');
-		if (!defined($vApp)) {
-			notify($ERRORS{'CRITICAL'}, 0, "could not get vApp after creating VM");
+		# disconnect it from the internet
+		$self->_disconnect_from_internet($computer_shortname, $vApp);
+		
+		# create the VM
+		if (!$self->_delete_vm($computer_shortname, $vApp)) {
 			return;
 		}
+	}
+
+	if ($laststate_name ne "new") {
+		notify($ERRORS{'OK'}, 0, "Last state is $laststate_name; not a new reservation, skipping actual load");
+		return 1;
+	}
+
+	# get the image template
+	my $vAppTemplate = $self->_get_vapp_template($image_name);
+
+	# create the VM
+	$self->_create_vm($computer_shortname, $vAppTemplate);
+		
+	# should be able to find the vApp now
+	$vApp = $self->_get_from_vdc('//ns:ResourceEntity[@type=\'application/vnd.vmware.vcloud.vApp+xml\' and @name=\''.$computer_shortname.'\']/@href');
+	if (!defined($vApp)) {
+		notify($ERRORS{'CRITICAL'}, 0, "could not get vApp after creating VM");
+		return;
 	}
 	
 	# get the status and private IP address of the VM
@@ -968,7 +1141,7 @@ sub load
 	}
 	
 	if ($status eq "2") {
-		return if (!$self->power_on($vApp));
+		return if (!$self->power_on($computer_shortname, $vApp));
 	}
 
 	if (!$self->_is_connected_internet) {
