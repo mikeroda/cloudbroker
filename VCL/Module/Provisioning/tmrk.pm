@@ -707,14 +707,14 @@ sub _disconnect_from_internet
 	my $xc = XML::LibXML::XPathContext->new( $doc->documentElement()  );
 	$xc->registerNs('ns', 'urn:tmrk:vCloudExpressExtensions-1.6');
 
-	my @nodes = $xc->findnodes('//ns:InternetService/ns:Href');
+	my @nodes = $xc->findnodes('//ns:InternetService');
 	foreach my $internetService (@nodes) {
 		my $xc_is = XML::LibXML::XPathContext->new( $internetService );
 		$xc_is->registerNs('ns', 'urn:tmrk:vCloudExpressExtensions-1.6');
-		my $id = $xc_is->findvalue('//ns:InternetService/ns:Id');
-		my $url = $xc_is->findvalue('//ns:InternetService/ns:Href');
-		my $PublicIpAddress = $xc_is->findvalue('//ns:PublicIpAddress/ns:Name');
-		my $PublicIpId = $xc_is->findvalue('//ns:PublicIpAddress/ns:Id');
+		my $id = $xc_is->findvalue('./ns:Id');
+		my $url = $xc_is->findvalue('./ns:Href');
+		my $PublicIpAddress = $xc_is->findvalue('./ns:PublicIpAddress/ns:Name');
+		my $PublicIpId = $xc_is->findvalue('./ns:PublicIpAddress/ns:Id');
 
 		notify($ERRORS{'DEBUG'}, 0, "Getting nodes on internet service $id");
 
@@ -804,9 +804,9 @@ sub _is_connected_internet
 	foreach my $internetService (@nodes) {
 		my $xc_is = XML::LibXML::XPathContext->new( $internetService );
 		$xc_is->registerNs('ns', 'urn:tmrk:vCloudExpressExtensions-1.6');
-		my $id = $xc_is->findvalue('//ns:InternetService/ns:Id');
-		my $url = $xc_is->findvalue('//ns:InternetService/ns:Href');
-		my $PublicIpAddress = $xc_is->findvalue('//ns:PublicIpAddress/ns:Name');
+		my $id = $xc_is->findvalue('./ns:Id');
+		my $url = $xc_is->findvalue('./ns:Href');
+		my $PublicIpAddress = $xc_is->findvalue('./ns:PublicIpAddress/ns:Name');
 
 		notify($ERRORS{'DEBUG'}, 0, "Getting nodes on internet service $id");
 
@@ -945,7 +945,7 @@ sub power_off
 	}
 	
 	if ($status ne '2') {
-		notify($ERRORS{'CRITICAL'}, 0, "VM $vAppName failed to power off");
+		notify($ERRORS{'WARNING'}, 0, "VM $vAppName failed to power off");
 		return;
 	}
 
