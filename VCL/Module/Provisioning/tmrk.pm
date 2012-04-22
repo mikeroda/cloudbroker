@@ -760,7 +760,7 @@ sub _is_connected_internet
 	my $xc = XML::LibXML::XPathContext->new( $doc->documentElement()  );
 	$xc->registerNs('ns', 'urn:tmrk:vCloudExpressExtensions-1.6');
 
-	my @nodes = $xc->findnodes('//ns:InternetService/ns:Href');
+	my @nodes = $xc->findnodes('//ns:InternetService');
 	foreach my $internetService (@nodes) {
 		my $xc_is = XML::LibXML::XPathContext->new( $internetService );
 		$xc_is->registerNs('ns', 'urn:tmrk:vCloudExpressExtensions-1.6');
@@ -771,6 +771,7 @@ sub _is_connected_internet
 		notify($ERRORS{'DEBUG'}, 0, "Getting nodes on internet service $id");
 
 	    my $req = HTTP::Request->new(GET => $url."/nodeServices");
+	    
 	    my $response = $self->_request($req);
 		if (!defined($response)) {
 			notify($ERRORS{'CRITICAL'}, 0, "Failed to get: ".$url."/nodeServices");
