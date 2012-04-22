@@ -80,7 +80,6 @@ use constant TIMEOUT_DEPLOY_MINS => 10;
 use constant TIMEOUT_POWER_ON_MINS => 5;
 use constant TIMEOUT_POWER_OFF_MINS => 5;
 use constant POLLING_INTERVAL_SECS => 20;
-use constant use_intantiation_params => 0;
 
 ##############################################################################
 
@@ -372,44 +371,9 @@ sub _create_vm
 	my $VAppTemplate = XML::LibXML::Element->new( "VAppTemplate" );
 	$VAppTemplate->setAttribute("href", $vAppTemplate);
 	$root->addChild($VAppTemplate);
-
-	my $InstantiationParams;
-	
-	if (use_intantiation_params) {
-		$InstantiationParams = XML::LibXML::Element->new( "InstantiationParams" );
-		$root->addChild($InstantiationParams);
-	
-		my $ProductSection = XML::LibXML::Element->new( "ProductSection" );
-		$ProductSection->setNamespace("http://www.vmware.com/vcloud/v0.8", "q1", 0);
-		$ProductSection->setNamespace("http://schemas.dmtf.org/ovf/envelope/1", "ovf", 0);
-		$InstantiationParams->addChild($ProductSection);
-	
-		my $Property = XML::LibXML::Element->new( "Property" );
-		$Property->setNamespace("http://schemas.dmtf.org/ovf/envelope/1");
-		$Property->setAttribute("ovf:key", "row");
-		$Property->setAttribute("ovf:value", "Api");
-		$ProductSection->addChild($Property);
-	
-		$Property = XML::LibXML::Element->new( "Property" );
-		$Property->setNamespace("http://schemas.dmtf.org/ovf/envelope/1");
-		$Property->setAttribute("ovf:key", "group");
-		$Property->setAttribute("ovf:value", "Api");
-		$ProductSection->addChild($Property);
-
-		$Property = XML::LibXML::Element->new( "Property" );
-		$Property->setNamespace("http://schemas.dmtf.org/ovf/envelope/1");
-		$Property->setAttribute("ovf:key", "sshKeyFingerprint");
-		$Property->setAttribute("ovf:value", "e4:b3:18:b3:0e:11:44:ef:2d:2b:44:ef:58:09:b5:8e");
-		$ProductSection->addChild($Property);
-	}
 	
 	my $vHardwareSection = XML::LibXML::Element->new( "VirtualHardwareSection" );
-	if (defined($InstantiationParams)) {
-		$InstantiationParams->addChild($vHardwareSection);
-	}
-	else {
-		$root->addChild($vHardwareSection);
-	}
+	$root->addChild($vHardwareSection);
 
 	my $item = XML::LibXML::Element->new( "Item" );
 	$item->setNamespace("http://schemas.dmtf.org/ovf/envelope/1");
@@ -450,12 +414,8 @@ sub _create_vm
 	$item->addChild($virtualQuantity);
 
 	my $networkConfigSection = XML::LibXML::Element->new( "NetworkConfigSection" );
-	if (defined($InstantiationParams)) {
-		$InstantiationParams->addChild($networkConfigSection);
-	}
-	else {
-		$root->addChild($vHardwareSection);
-	}
+	$root->addChild($networkConfigSection);
+
 	my $networkConfig = XML::LibXML::Element->new( "NetworkConfig" );
 	$networkConfigSection->addChild($networkConfig);
 	my $networkAssociation = XML::LibXML::Element->new( "NetworkAssociation" );
@@ -1231,9 +1191,8 @@ sub node_status {
 	my %status;
 
 	# Initialize all hash keys here to make sure they're defined
-	$status{status}       = 0;
-	$status{currentimage} = 0;
-	$status{ping}         = 0;
+	$status{status}       = 'RELOAD';
+	$status{currentimage} = '';
 	$status{ssh}          = 0;
 	$status{image_match}  = 0;
 
@@ -1244,8 +1203,8 @@ sub node_status {
 		notify($ERRORS{'OK'}, 0, "$computer_shortname is pingable ($status{ping})");
 	}
 	else {
+		$status{ping} = 0;
 		notify($ERRORS{'OK'}, 0, "$computer_shortname is not pingable ($status{ping})");
-		return $status{status};
 	}
 
 	notify($ERRORS{'DEBUG'}, 0, "Trying to ssh...");
@@ -1259,31 +1218,25 @@ sub node_status {
 
 		notify($ERRORS{'DEBUG'}, 0, "SSH good, trying to query image name");
 
-		############################################
-		# TO-DO: NEED TO GET CURRENT IMAGE FROM API
-		############################################
-		$status{currentimage} = $requestedimagename;
+        # Get the contents of currentimage.txt and check if currentimage.txt matches the requested image name
+        my $current_image_name = $self->os->get_current_image_name();
+        $status{currentimage} = $current_image_name;
 
-		notify($ERRORS{'DEBUG'}, 0, "Image name: $status{currentimage}");
-
-		if ($status{currentimage}) {
-			chomp($status{currentimage});
-			if ($status{currentimage} =~ /$requestedimagename/) {
-				$status{image_match} = 1;
-				notify($ERRORS{'OK'}, 0, "$computer_shortname is loaded with requestedimagename $requestedimagename");
-			}
-			else {
-				notify($ERRORS{'OK'}, 0, "$computer_shortname reports current image is currentimage= $status{currentimage} requestedimagename= $requestedimagename");
-			}
-		} ## end if ($status{currentimage})
+        if (!$current_image_name) {
+                notify($ERRORS{'DEBUG'}, 0, "unable to retrieve image name from currentimage.txt on VM $computer_shortname, returning 'RELOAD'");
+        }
+        elsif ($current_image_name eq $requestedimagename) {
+                notify($ERRORS{'DEBUG'}, 0, "currentimage.txt image ($current_image_name) matches requested image name ($requestedimagename) on VM $computer_shortname");
+                $status{image_match} = 1;
+        }
+        else {
+                notify($ERRORS{'DEBUG'}, 0, "currentimage.txt image ($current_image_name) does not match requested image name ($requestedimagename) on VM $computer_shortname, returning 'RELOAD'");
+        }
 	} ## end if ($sshd eq "on")
 
 	# Determine the overall machine status based on the individual status results
 	if ($status{ssh} && $status{image_match}) {
 		$status{status} = 'READY';
-	}
-	else {
-		$status{status} = 'RELOAD';
 	}
 
 	notify($ERRORS{'DEBUG'}, 0, "status set to $status{status}");
