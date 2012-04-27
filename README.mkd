@@ -19,8 +19,8 @@ resources from Terremark [vCloud Express][vcloud].
     Add your account username and password to /etc/vcl/vcld.conf 
     as follows:
 
-    tmrkUser=<username>
-    tmrkPass=<password>
+    tmrkUser=<username>  
+    tmrkPass=<password>  
 
 2.  Install the new [provisioning][tmrk.pm] and [OS][Linux_tmrk.pm]
     modules, and the updated [utils][utils.pm] module.
