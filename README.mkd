@@ -1,0 +1,77 @@
+# cloudbroker README #
+
+Extends an Apache [VCL][vcl] cloud to enable brokering computing 
+resources from Terremark [vCloud Express][vcloud].
+
+----
+
+## Installation Instructions ##
+
+1.  Create an account on Terremark vCloud Express:
+    https://signup.vcloudexpress.terremark.com/
+
+    Then go under Key Management and create a new key. Download it to
+    the server where the management node will be running. It should be
+    named vcloud.pem. Edit the management node via the web interface and
+    set the 'End Node SSH Identity Key Files' to the location of the key 
+    file (e.g. /etc/vcl/vcloud.pem).
+
+    Add your account username and password to /etc/vcl/vcld.conf 
+    as follows:
+
+    tmrkUser=<username>
+    tmrkPass=<password>
+
+2.  Install the new [provisioning][tmrk.pm] and [OS][Linux_tmrk.pm]
+    modules, and the updated [utils][utils.pm] module.
+    
+3.  Run the [MySQL][mysql] script to add the new images and 
+    modules to the database.  Make sure the ids used in the 
+    script aren't in use already in your database.
+
+    Go into the web interface and create an image group and 
+    computer group for Terremark. Map them together. Add the 
+    images to the image group.
+    
+    Create as many computers as you want. Name them something 
+    like tmrk1, tmrk2, etc., but don't use any special characters 
+    in the name. Use type 'blade'. Make sure you add the computers 
+    to the Terremark computer group. 
+    
+    Give yourself or whomever privilege to the new computer 
+    and image groups.
+    
+4.  Restart vcld
+
+[vcl]: https://cwiki.apache.org/VCL/apache-vcl.html
+[vcloud]: http://vcloudexpress.terremark.com/
+[tmrk.pm]: https://github.com/mikeroda/cloudbroker/blob/master/VCL/Module/Provisioning/tmrk.pm
+[Linux_tmrk.pm]: https://github.com/mikeroda/cloudbroker/blob/master/VCL/Module/OS/Linux/Linux_tmrk.pm
+[mysql]: https://github.com/mikeroda/cloudbroker/blob/master/tmrk.sql
+
+----
+
+## Limitations ##
+
+* Linux OS support only
+* VMs are not deleted from Terremark at the end of the reservation 
+  if the user never logs in - VCL will 'sanitize' the OS instead.
+* The management node must be dedicated for Terremark provisioning
+  since it is setup to use the key from vcloud.
+
+----
+
+Copyright 2012 Mike Roda
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+   
