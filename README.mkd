@@ -47,6 +47,7 @@ resources from Terremark [vCloud Express][vcloud].
 [vcloud]: http://vcloudexpress.terremark.com/
 [tmrk.pm]: https://github.com/mikeroda/cloudbroker/blob/master/VCL/Module/Provisioning/tmrk.pm
 [Linux_tmrk.pm]: https://github.com/mikeroda/cloudbroker/blob/master/VCL/Module/OS/Linux/Linux_tmrk.pm
+[utils.pm]: https://github.com/mikeroda/cloudbroker/blob/master/VCL/utils.pm
 [mysql]: https://github.com/mikeroda/cloudbroker/blob/master/tmrk.sql
 
 ----
@@ -58,6 +59,12 @@ resources from Terremark [vCloud Express][vcloud].
   if the user never logs in - VCL will 'sanitize' the OS instead.
 * The management node must be dedicated for Terremark provisioning
   since it is setup to use the key from vcloud.
+* Management node communication with the VM is done over the public IP.
+  Support is there for doing it over the private IP (see comments in
+  the provisioning module) but it is commented out - requires Cisco
+  VPN agent to be running.
+* Only TCP port 22 (SSH) is opened on the Public IP. Could be 
+  extended to include port 80 (HTTP), etc. 
 
 ----
 
