@@ -15,32 +15,32 @@ resources from Terremark [vCloud Express][vcloud].
 * The following Perl modules are directly referenced by the 
   provisioning module:
 
-  HTTP::Request
-  HTTP::Request::Common
-  HTTP::Cookies
-  LWP::UserAgent
-  XML::LibXML
+  HTTP::Request  
+  HTTP::Request::Common  
+  HTTP::Cookies  
+  LWP::UserAgent  
+  XML::LibXML  
   
   Additionally, there are indirect dependencies on the following:
   
-  Net::SSLeay
-  LWP::Protocol::https
-  XML::LibXML::XPathContext
-  Hash::FieldHash
+  Net::SSLeay  
+  LWP::Protocol::https  
+  XML::LibXML::XPathContext  
+  Hash::FieldHash  
   
   cpanm is recommended to install the modules. To install 
   cpan, type:
 
-  cpan App::cpanminus
+  cpan App::cpanminus  
 
   This will take several minutes. Then install the following
   Perl libraries by typing...
 
-  cpanm Net::SSLeay
-  cpanm LWP::Protocol::https
-  cpanm XML::LibXML
-  cpanm XML::LibXML::XPathContext
-  cpanm Hash::FieldHash
+  cpanm Net::SSLeay  
+  cpanm LWP::Protocol::https  
+  cpanm XML::LibXML  
+  cpanm XML::LibXML::XPathContext  
+  cpanm Hash::FieldHash  
 
 ----
 
