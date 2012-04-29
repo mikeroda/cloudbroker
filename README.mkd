@@ -5,12 +5,48 @@ resources from Terremark [vCloud Express][vcloud].
 
 ----
 
+## Prerequisites ##
+
+* You will need an account on Terremark vCloud Express:
+  https://signup.vcloudexpress.terremark.com/
+
+  You will also need a key for logging into the VMs. The key
+  can be created under the Key Management menu.
+* The following Perl modules are directly referenced by the 
+  provisioning module:
+
+  HTTP::Request
+  HTTP::Request::Common
+  HTTP::Cookies
+  LWP::UserAgent
+  XML::LibXML
+  
+  Additionally, there are indirect dependencies on the following:
+  
+  Net::SSLeay
+  LWP::Protocol::https
+  XML::LibXML::XPathContext
+  Hash::FieldHash
+  
+  cpanm is recommended to install the modules. To install 
+  cpan, type:
+
+  cpan App::cpanminus
+
+  This will take several minutes. Then install the following
+  Perl libraries by typing...
+
+  cpanm Net::SSLeay
+  cpanm LWP::Protocol::https
+  cpanm XML::LibXML
+  cpanm XML::LibXML::XPathContext
+  cpanm Hash::FieldHash
+
+----
+
 ## Installation Instructions ##
 
-1.  Create an account on Terremark vCloud Express:
-    https://signup.vcloudexpress.terremark.com/
-
-    Then go under Key Management and create a new key. Download it to
+1.  Download the key you created on the Terremark web interface to
     the server where the management node will be running. It should be
     named vcloud.pem. Edit the management node via the web interface and
     set the 'End Node SSH Identity Key Files' to the location of the key 
@@ -52,7 +88,7 @@ resources from Terremark [vCloud Express][vcloud].
 
 ----
 
-## Limitations ##
+## Limitations and Issues ##
 
 * Linux OS support only
 * VMs are not deleted from Terremark at the end of the reservation 
@@ -65,6 +101,11 @@ resources from Terremark [vCloud Express][vcloud].
   VPN agent to be running.
 * Only TCP port 22 (SSH) is opened on the Public IP. Could be 
   extended to include port 80 (HTTP), etc. 
+* Frequently, we are unable to log into the VM created via the API 
+  (SSH PermissionDenied error) and consequently the reservation fails, 
+  leaving the VM running. Manually issue a 'reload' via the VCL 
+  administrator menu to invoke the provisioning module again, which
+  will delete the VM.  The root cause of this issue is unknown.
 
 ----
 
